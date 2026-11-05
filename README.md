@@ -47,7 +47,7 @@ every measure of the app to the guide it comes from – OWASP ASVS 5.0, the OWAS
 NGINX Benchmark – with the risks accepted on purpose. The server is hardened by the CIS Benchmarks
 for Ubuntu, nginx and PostgreSQL in its own repository, **[dk-srv](https://github.com/DimiJonas/dk-srv)**:
 the CIS Level 1 score (Ubuntu's own audit tool) went from **72.2 %** before the hardening to
-**92.4 %** of all rules – **100 %** without the 13 risks accepted on purpose, each with its reason –
+**92.7 %** of all rules – **100 %** without the 13 risks accepted on purpose, each with its reason –
 and its `HARDENING.md` explains every mechanism: what, why, and how to check it yourself.
 
 **The app and nginx**

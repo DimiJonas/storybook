@@ -6,7 +6,7 @@ apply, and which risks are accepted on purpose (with the reason).
 The **server** it runs on (Ubuntu, nginx's server-wide part, PostgreSQL, the firewall, SSH, the
 nightly checks) is its own repository, [dk-srv](https://github.com/DimiJonas/dk-srv) – its
 [SECURITY.md](https://github.com/DimiJonas/dk-srv/blob/main/SECURITY.md) has the CIS scorecard:
-**72.2 %** before the hardening, **92.4 %** of all rules after it, **100 %** of the rules that apply
+**72.2 %** before the hardening, **92.7 %** of all rules after it, **100 %** of the rules that apply
 (13 risks accepted on purpose, each with its reason), and its
 [HARDENING.md](https://github.com/DimiJonas/dk-srv/blob/main/HARDENING.md) explains every mechanism.
 

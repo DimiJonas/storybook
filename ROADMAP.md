@@ -864,7 +864,9 @@ repository). Split into three, all under github.com/DimiJonas:
 
 **Moving the server**: once, with dk-srv's `migrate/from-storybook.sh` (dk-srv's
 `setup-commands.txt`, "Moving from the storybook's scripts") – settings, memory and logs to dk-srv's
-places, the hardening's files renamed; nothing about the settings themselves changes.
+places, the hardening's files renamed; nothing about the settings themselves changes. Measured
+afterwards (2026-11-05): all rules **92.7 %** (344 pass, 13 fail – exactly the 13 accepted risks),
+without the accepted risks **100 %**.
 
 ---
 
