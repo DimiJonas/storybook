@@ -1,0 +1,265 @@
+@import 'tailwindcss';
+
+/* Pulsing dot in the timeline: class "animate-dot-pulse" */
+@theme {
+  --animate-dot-pulse: dot-pulse 1.5s ease-in-out infinite;
+
+  @keyframes dot-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+  }
+}
+
+/*
+  Compatibility styles so everything looks the same as with Tailwind CSS v3:
+  - v4 changed the default border color to `currentcolor` (v3 used gray-200)
+  - v4 no longer gives buttons a pointer (hand) cursor by default
+  - v4 removes the default look of the file input's "Choose files" button
+  If you ever remove these, add explicit `border-gray-200` / `cursor-pointer` classes where needed.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* v4 also resets the "Choose files" button of file inputs; bring back the browser's default look */
+  ::file-selector-button {
+    all: revert;
+  }
+}
+
+/*
+  Start screen ("splash"): the element #splash in index.html, shown while the app starts and
+  loads the memories; src/splash.js fades it out (and shows it again when needed).
+  Same colors as the app icon.
+*/
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  color: #fff;
+  background:
+    radial-gradient(ellipse 70% 30% at 0% 92%, rgb(243 147 226 / 0.85), transparent 70%),
+    radial-gradient(ellipse 60% 28% at 100% 100%, rgb(240 155 227 / 0.8), transparent 70%),
+    radial-gradient(ellipse 45% 25% at 100% 28%, rgb(243 147 226 / 0.45), transparent 70%),
+    radial-gradient(ellipse 50% 22% at 15% 8%, rgb(129 152 244 / 0.7), transparent 70%),
+    linear-gradient(165deg, #8198f4 0%, #927cf1 38%, #8a78e4 62%, #6170e8 100%);
+  transition: opacity 0.45s ease;
+}
+.splash--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.splash__icon {
+  width: min(44vw, 190px);
+  height: auto;
+  aspect-ratio: 1;
+  filter: drop-shadow(0 18px 30px rgb(55 40 140 / 0.35));
+  animation: splash-float 3.2s ease-in-out infinite;
+}
+.splash__title {
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 14px rgb(55 40 140 / 0.4);
+}
+/* only appears when loading takes a moment */
+.splash__hint {
+  font-size: 0.95rem;
+  opacity: 0;
+  animation: splash-fade-in 0.6s ease 1.2s forwards;
+}
+/* the six stars around the icon: position, size, when they twinkle */
+.splash__star:nth-of-type(1) { left: 14%; top: 22%; font-size: 1.6rem; animation-delay: 0s; }
+.splash__star:nth-of-type(2) { left: 82%; top: 17%; font-size: 2.2rem; animation-delay: 0.6s; }
+.splash__star:nth-of-type(3) { left: 10%; top: 62%; font-size: 1.2rem; animation-delay: 1.2s; }
+.splash__star:nth-of-type(4) { left: 86%; top: 58%; font-size: 1.4rem; animation-delay: 0.3s; }
+.splash__star:nth-of-type(5) { left: 70%; top: 80%; font-size: 1rem; animation-delay: 1.6s; }
+.splash__star:nth-of-type(6) { left: 26%; top: 84%; font-size: 1.1rem; animation-delay: 0.9s; }
+.splash__star {
+  position: absolute;
+  color: #fde7d3;
+  text-shadow: 0 0 12px rgb(253 231 211 / 0.8);
+  animation: splash-twinkle 2.6s ease-in-out infinite;
+}
+@keyframes splash-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes splash-twinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@keyframes splash-fade-in {
+  to { opacity: 0.85; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash__icon, .splash__star { animation: none; }
+}
+
+/* Photos in the add/edit form (PhotoOrderGrid): holding one on a phone starts dragging it –
+   so no "save image" menu and no text selection there */
+.photo-tile {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* A row that scrolls sideways without showing a scrollbar (navigation bar above the timeline) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+  Map pins (src/map/mapTools.js): a drop shape in the app's purple, with the number of memories
+  when there are several. "highlight" = the chosen Kapitel/year, "dim" = the others.
+*/
+.sb-pin {
+  background: none;
+  border: none;
+}
+.sb-pin .sb-pin-head {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: #9333ea;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.35);
+  transition: opacity 0.2s, transform 0.2s, background 0.2s;
+}
+.sb-pin .sb-pin-count {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(45deg);
+  color: #fff;
+  font: 700 11px/1 system-ui, sans-serif;
+}
+.sb-pin.highlight .sb-pin-head {
+  background: #db2777;
+  transform: rotate(-45deg) scale(1.2);
+}
+.sb-pin.dim .sb-pin-head {
+  opacity: 0.35;
+  background: #a78bfa;
+}
+/* groups of pins (leaflet.markercluster) in the same colours */
+.marker-cluster.sb-cluster {
+  background: rgb(147 51 234 / 0.25);
+  border-radius: 50%;
+}
+.marker-cluster.sb-cluster div {
+  width: 32px;
+  height: 32px;
+  margin: 4px;
+  border-radius: 50%;
+  background: #9333ea;
+  color: #fff;
+  font: 700 12px/32px system-ui, sans-serif;
+  text-align: center;
+  border: 2px solid #fff;
+}
+.marker-cluster.sb-cluster.highlight div {
+  background: #db2777;
+}
+.marker-cluster.sb-cluster.dim {
+  opacity: 0.4;
+}
+/* the popup of a place: its memories */
+.sb-popup .leaflet-popup-content {
+  margin: 10px 12px;
+  min-width: 200px;
+  max-width: 260px;
+}
+.sb-popup-title {
+  font: 700 15px/1.3 system-ui, sans-serif;
+  color: #6b21a8;
+  margin-bottom: 6px;
+}
+.sb-popup-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sb-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 8px;
+  text-align: left;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #1f2937;
+}
+.sb-popup-item:hover {
+  background: #f3e8ff;
+}
+.sb-popup-item.highlight {
+  background: #fce7f3;
+}
+.sb-popup-item img,
+.sb-popup-item .sb-popup-noimg {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f3e8ff;
+}
+/* the picture with a highlight's 👑 on its corner */
+.sb-popup-item .sb-popup-pic {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+}
+.sb-popup-item .sb-popup-crown {
+  position: absolute;
+  top: -4px; /* stays inside the item's padding: the list scrolls and would cut it off */
+  left: -4px;
+  font-size: 16px;
+  line-height: 1;
+  transform: rotate(-12deg);
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.3));
+}
+.sb-popup-item .sb-popup-text {
+  min-width: 0;
+  font: 13px/1.3 system-ui, sans-serif;
+}
+.sb-popup-item .sb-popup-text strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-popup-item .sb-popup-text span {
+  color: #6b7280;
+  font-size: 12px;
+}

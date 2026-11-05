@@ -1,0 +1,315 @@
+###################################################################################################
+# SETTING UP THE STORYBOOK WEBAPP on a new server (Ubuntu 24.04)
+#
+# Set up the server first: dk-srv's setup-commands.txt (https://github.com/DimiJonas/dk-srv),
+# steps 1–10 (own user appuser, SSH keys, firewall, automatic updates, nginx, fail2ban, Ubuntu Pro,
+# dk-srv itself). Then these steps, in this order; then dk-srv's steps 12–15 (the hardening).
+#
+# Where to run each command:
+#   (server)  on the server, logged in as appuser
+#   (laptop)  on your own computer
+#
+# The app's parts and where they live on the server:
+#   ~/storybook                       the code (git repository)
+#   ~/storybook/server/.env           passwords and secrets (never in git!)
+#   /etc/storybook/uploads/           photos (one folder per storybook: book_1/, book_2/, ...)
+#   /etc/storybook/clientbuild/       the built app that nginx serves
+#   /etc/storybook/maintenance/       the "kurze Pause" page for maintenance mode
+#   /opt/dk-apps/storybook            root's own copy of ops/root/ (what root runs: dk-app-update)
+#   ~/backups/storybook/              nightly backups
+#   PostgreSQL database "storybook"   memories, users, ... (user "webapp")
+#   pm2 process "backend"             the Node server, only reachable from the server itself
+#   nginx                             HTTPS, serves the app and photos, passes /api to the backend
+###################################################################################################
+
+
+# =================================================================================================
+# 0. Before you start
+# =================================================================================================
+
+# storybook.example.com in these commands stands for YOUR domain (e.g. storybook.your-domain.de) –
+# replace it where you type it. From step 4 on, the server knows it (/etc/storybook/site.conf), and
+# later commands read it from there.
+
+# (laptop) the domain must point to the new server: the DNS "A" record of storybook.example.com
+# (at the domain registrar) = the server's IP address. Check – must print the server's IP:
+getent hosts storybook.example.com
+
+
+# =================================================================================================
+# 1. Install the tools
+# =================================================================================================
+
+# (server) database, exiftool (reads a photo's GPS position and removes it from the file – see
+# "Places" in server/README.md), age (encrypts the backups); nginx, git and certbot come with
+# dk-srv's setup
+sudo apt update
+sudo apt install -y --no-install-recommends postgresql rsync curl libimage-exiftool-perl age
+
+# (server) Node.js 24 from NodeSource (Ubuntu's own Node is too old): add its package source ...
+curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup.sh
+sudo bash /tmp/nodesource_setup.sh
+
+# (server) ... and install Node.js; check: v24.x
+sudo apt install -y nodejs
+node -v
+
+# (server) Node.js security updates install themselves too (Ubuntu's automatic updates only
+# cover Ubuntu's own packages otherwise; only updates within Node 24)
+echo 'Unattended-Upgrade::Origins-Pattern { "site=deb.nodesource.com"; };' | sudo tee /etc/apt/apt.conf.d/52unattended-upgrades-nodesource
+
+# (server) check: the list mentions deb.nodesource.com
+sudo unattended-upgrade --dry-run --debug 2>&1 | grep -i 'allowed origins'
+
+# (server) pm2 keeps the backend running and starts it again after a reboot
+sudo npm install -g pm2
+
+
+# =================================================================================================
+# 2. Get the code
+# =================================================================================================
+
+# (server) clone the repository into ~/storybook – over https (the firewall keeps outgoing SSH
+# closed once no clone uses it)
+git clone https://github.com/DimiJonas/storybook ~/storybook
+
+
+# =================================================================================================
+# 3. Database
+# =================================================================================================
+
+# (server) check that PostgreSQL only listens on this computer: "localhost"
+sudo -u postgres psql -c 'SHOW listen_addresses;'
+
+# (server) check that passwords are stored safely: "scram-sha-256"
+sudo -u postgres psql -c 'SHOW password_encryption;'
+
+# (server) create the app's own database user "webapp" (asks for a password – make it long and
+# keep it: it goes into server/.env and ~/.pgpass). The app never uses the postgres superuser.
+sudo -u postgres createuser --pwprompt webapp
+
+# (server) create the database, owned by webapp (so webapp can create and change its tables)
+sudo -u postgres createdb -O webapp storybook
+
+
+# =================================================================================================
+# 4. Backend settings (server/.env)
+# =================================================================================================
+
+# (server) create an empty .env that only appuser can read (600)
+cd ~/storybook/server
+install -m 600 /dev/null .env
+
+# (server) create a random secret for signing logins – copy the printed line
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+
+# (server) fill in .env (nano: Ctrl+O, Enter saves, Ctrl+X closes) with these lines:
+#   NODE_ENV=production
+#   PORT=3001
+#   DB_USER=webapp
+#   DB_HOST=localhost
+#   DB_NAME=storybook
+#   DB_PASSWORD=<the password of webapp from step 3>
+#   JWT_SECRET=<the secret printed above>
+nano .env
+
+# (server) check: 600
+stat -c '%a' .env
+
+# (server) the storybook's address: kept only on the server, in /etc/storybook/site.conf (the
+# backend, the nginx configs and storybook-mode read it there) – use your domain. Step 9 adds the
+# certificate's folder to it.
+sudo install -d -m 755 /etc/storybook
+echo "DOMAIN=storybook.example.com" | sudo tee /etc/storybook/site.conf
+
+
+# =================================================================================================
+# 5. Install the backend and create the tables
+# =================================================================================================
+
+# (server) install the backend's libraries exactly as in package-lock.json
+cd ~/storybook/server
+npm ci
+
+# (server) create all tables; this also creates the first storybook (book_1)
+npm run migrate
+
+# --- EITHER a new, empty storybook: create the logins (asks for the password, hidden) ---
+# (one login per person, e.g. anna and ben)
+npm run user:password -- anna
+npm run user:password -- ben
+
+# --- OR move an existing storybook here: restore the newest backup instead (copy the dump from
+# the old server or from ~/storybook-backups/db/ on the laptop to ~/ first). Users and all
+# storybooks come with it. Use a new, empty database: drop the one from step 3 and create it again.
+sudo -u postgres dropdb storybook
+sudo -u postgres createdb -O webapp storybook
+pg_restore -U webapp -h localhost -d storybook --no-owner --no-privileges ~/storybook-YYYY-MM-DD.dump
+npm run migrate     # brings the restored database up to the code's current structure
+
+
+# =================================================================================================
+# 6. Photo folder
+# =================================================================================================
+
+# (server) the backend (appuser) writes photos there, nginx only reads them
+sudo mkdir -p /etc/storybook/uploads
+sudo chown appuser:appuser /etc/storybook/uploads
+sudo chmod 755 /etc/storybook/uploads
+
+# (server) only when moving an existing storybook (step 5, "OR"): copy the photos (from the
+# backup copy, e.g. uploaded to ~/uploads/ first) and recreate the small versions
+rsync -a ~/uploads/ /etc/storybook/uploads/
+cd ~/storybook/server && node scripts/create-thumbnails.js
+
+# (server) check: drwxr-xr-x appuser:appuser
+stat -c '%A %U:%G %n' /etc/storybook/uploads
+
+
+# =================================================================================================
+# 7. Start the backend with pm2 (also after every reboot)
+# =================================================================================================
+
+# (server) start it under the name "backend"
+cd ~/storybook/server
+pm2 start src/index.js --name backend
+
+# (server) check: answers 401 (= running, asks for a login)
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/api/books
+
+# (server) start pm2 automatically when the server boots: this prints a command starting with
+# "sudo env PATH=..." – copy and run that printed command
+pm2 startup
+
+# (server) remember the running processes, so pm2 starts them again after a reboot
+pm2 save
+
+# (pm2's log files are rotated by the storybook's log rotation, set up in step 9 through dk-srv –
+# pm2-logrotate isn't needed)
+
+
+# =================================================================================================
+# 8. Build the app
+# =================================================================================================
+
+# (server) build the app and copy it to /etc/storybook/clientbuild (nginx serves it from there)
+sudo mkdir -p /etc/storybook/clientbuild
+cd ~/storybook/client
+npm ci
+./update_nginx.sh
+
+
+# =================================================================================================
+# 9. HTTPS certificate, nginx, and what root runs for the storybook (ops/root/, through dk-srv)
+# =================================================================================================
+
+# (server) a small temporary config, only so that certbot can get the certificate
+printf 'server {\n    listen 80;\n    server_name %s;\n    root /var/www/html;\n}\n' "$(. /etc/storybook/site.conf; echo $DOMAIN)" | sudo tee /etc/nginx/sites-available/storybook
+sudo ln -sfn /etc/nginx/sites-available/storybook /etc/nginx/sites-enabled/storybook
+sudo nginx -t && sudo systemctl reload nginx
+
+# (server) get the certificate (asks for an email address for expiry warnings and to accept the
+# terms). It renews itself automatically (certbot.timer).
+sudo certbot certonly --nginx -d "$(. /etc/storybook/site.conf; echo $DOMAIN)"
+
+# (server) note the folder of the certificate: "Certificate Path: /etc/letsencrypt/live/<FOLDER>/..."
+sudo certbot certificates
+
+# (server) nginx must be able to ask the backend before serving a photo (auth_request, step 14):
+# this prints "http_auth_request_module" (Ubuntu's nginx has it)
+nginx -V 2>&1 | grep -o http_auth_request_module
+
+# (server) the storybook's root parts: dk-srv keeps a root-owned copy of just ops/root/
+# (/opt/dk-apps/storybook) and runs ops/root/install.sh from there. It asks once for <FOLDER>
+# from above (stored in /etc/storybook/site.conf as CERT_NAME), fills in the nginx templates
+# (normal and maintenance), installs them with the "kurze Pause" page and storybook-mode, checks
+# nginx and reloads it, and registers the storybook with dk-srv (/etc/dk-srv/apps.d/storybook.conf:
+# nightly npm audit, weekly report, file integrity check, log rotation, its databases)
+sudo dk-app-update storybook https://github.com/DimiJonas/storybook
+
+# (server) check: the security headers are there (strict-transport-security, content-security-policy, ...)
+curl -sI https://$(. /etc/storybook/site.conf; echo $DOMAIN) | grep -iE 'strict|content-security|x-frame|server'
+
+# (server) check: the storybook is normal, the backend running
+sudo storybook-mode status
+
+# (server) check that the automatic renewal works (changes nothing)
+sudo certbot renew --dry-run
+systemctl list-timers | grep -i certbot
+
+
+# =================================================================================================
+# 10. Nightly backups
+# =================================================================================================
+
+# (server) let the backup read the database password (the one of webapp from step 3) without
+# asking; readable only by appuser
+echo 'localhost:5432:*:webapp:DB_PASSWORD_OF_WEBAPP' > ~/.pgpass
+chmod 600 ~/.pgpass
+
+# (laptop) the backups are encrypted to a key that only you have: make it once, copy the file's
+# contents into your password manager (without it the backups can't be read). Note the printed
+# "Public key: age1…"
+sudo apt install age
+mkdir -p ~/.config/storybook && age-keygen -o ~/.config/storybook/backup-key.txt
+chmod 600 ~/.config/storybook/backup-key.txt
+
+# (server) the public key on the server (age1… from above)
+echo "AGE_RECIPIENT=age1..." | sudo tee /etc/storybook/backup.conf
+# (server) readable for the backup, which runs as appuser (it's only the public key)
+sudo chmod 644 /etc/storybook/backup.conf
+
+# (server) run it once by hand: ends with "backup done (encrypted)" (the restore test needs its
+# database, which dk-srv's hardening creates – part "postgres", step 11)
+~/storybook/ops/backup.sh
+
+# (server) run it every night at 03:15: `crontab -e` and add this line at the end
+#   15 3 * * * /home/appuser/storybook/ops/backup.sh >> /home/appuser/backups/storybook/backup.log 2>&1
+crontab -e
+
+# (laptop) a key that may ONLY read the backups (no shell), and an SSH alias for it – then the
+# server reports "Backups pulled" instead of a login. SERVER = the server's address.
+ssh-keygen -t ed25519 -f ~/.ssh/storybook_backup -C "storybook backup pull"
+printf 'Host storybook-backup\n    HostName SERVER\n    User appuser\n    IdentityFile ~/.ssh/storybook_backup\n    IdentitiesOnly yes\n' >> ~/.ssh/config
+cat ~/.ssh/storybook_backup.pub
+
+# (server) allow that key – read-only, only the backups folder (paste the line printed above)
+echo 'restrict,command="/usr/bin/rrsync -ro /home/appuser/backups/storybook" PASTE-THE-KEY-LINE-HERE' >> ~/.ssh/authorized_keys
+
+# (laptop) fetch the backups now and then; it checks that the newest one decrypts with your key
+~/storybook/ops/pull-backup.sh
+
+
+# =================================================================================================
+# 11. The server's hardening and checks for the storybook (dk-srv)
+# =================================================================================================
+
+# (server) the backend sends its own notifications (topic from dk-srv's /etc/dk-srv/notify.conf)
+pm2 restart backend
+
+# (server) dk-srv's hardening now knows the storybook (its databases, its places): dk-srv's
+# setup-commands.txt, steps 12–15. Its part "postgres" creates storybook_restoretest; afterwards
+# the restore test once (ends with "Restore test passed"):
+FORCE_RESTORE_TEST=1 ~/storybook/ops/backup.sh
+
+# (server) the nightly security check once: npm audit of server/ and client/ is in it
+sudo dk-security-check
+
+
+# =================================================================================================
+# 12. Final checks
+# =================================================================================================
+
+# (server) from outside only 22, 80, 443 are reachable; 5432 (postgres) and 3001 (backend)
+# only on 127.0.0.1 / [::1]
+sudo ss -tlnp
+
+# (server) after a test reboot, everything comes back by itself (see project_maintenance_commands.txt,
+# "After a reboot")
+sudo reboot
+
+# (laptop) open https://storybook.example.com (your domain), log in, rename the storybook (⋮ menu), add a
+# memory with a photo. Optional online checks: https://www.ssllabs.com/ssltest/ and
+# https://securityheaders.com
+
+# More storybooks: see project_maintenance_commands.txt, "Storybooks".

@@ -1,0 +1,162 @@
+#!/bin/bash
+# The storybook's own modes – the name says which (with sudo):
+#
+#   sudo storybook-mode status        which mode it's in, and a short summary (--short: one word)
+#   sudo storybook-mode normal        the storybook runs as usual. Refused while the reason for
+#                                     maintenance is still there (critical npm audit findings);
+#                                     --force switches anyway and accepts those problems as false
+#                                     alarms (the nightly check won't switch on again for them)
+#   sudo storybook-mode maintenance   backend stopped, nginx shows the "kurze Pause" page (503) for
+#                                     every address – for problems in the storybook's libraries or
+#                                     Node.js, or planned work
+#   (for dk-srv's lockdown – the whole web server off: sudo dk-mode lockdown)
+#   storybook-mode stop | start       only the backend, used by dk-mode lockdown/normal; `start`
+#                                     leaves it stopped while maintenance mode is on
+#
+#   --reason "…"   shown in the notification and in `status`
+#
+# Every mode survives reboots. The nightly security check (dk-security-check, dk-srv) switches to
+# maintenance by itself once MODE=auto is set in /etc/dk-srv/dk-srv.conf. Installed from
+# ops/root/ by `sudo dk-app-update storybook` to /usr/local/sbin/storybook-mode (owned by root).
+set -u
+. "${DK_LIB:-/usr/local/lib/dk-srv}/security-lib.sh"
+: "${WAIT_SECONDS:=20}"
+: "${SB_ETC:=/etc/storybook}"
+: "${SB_STATE:=/var/lib/storybook}"
+: "${BACKEND_URL:=http://127.0.0.1:3001}"
+APP=storybook
+APP_USER=$(app_get "$APP" APP_USER); : "${APP_USER:=appuser}"
+SITE_URL=$(app_get "$APP" SITE_URL)
+
+command=${1:-}
+shift || true
+reason="started by hand"
+force=no short=no
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --reason) reason=${2:-$reason}; shift 2 ;;
+    --force) force=yes; shift ;;
+    --short) short=yes; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+NORMAL_SITE="$NGINX_DIR/sites-available/storybook"
+MAINTENANCE_SITE="$NGINX_DIR/sites-available/storybook-maintenance"
+ENABLED_SITE="$NGINX_DIR/sites-enabled/storybook"
+problems=0
+step() { echo; echo "== $*"; }
+ok() { echo "   ok: $*"; }
+warn() { echo "   WARNING: $*"; problems=$((problems + 1)); }
+
+mode_now() {
+  if [ "$(readlink "$ENABLED_SITE" 2>/dev/null)" = "$MAINTENANCE_SITE" ]; then echo maintenance; else echo normal; fi
+}
+remember_reason() { mkdir -p "$SB_STATE"; printf '%s\t%s\t%s\n' "$1" "$(date '+%F %T')" "$reason" > "$SB_STATE/mode"; }
+
+backend_stop() {
+  step "stopping the backend (pm2) and remembering that for reboots"
+  if as_user "$APP_USER" pm2 stop backend >/dev/null && as_user "$APP_USER" pm2 save >/dev/null; then ok "backend stopped"
+  else warn "pm2 couldn't stop the backend – check with: pm2 list"; fi
+}
+backend_start() {
+  step "starting the backend (pm2) and remembering that for reboots"
+  if ! { as_user "$APP_USER" pm2 start backend >/dev/null && as_user "$APP_USER" pm2 save >/dev/null; }; then warn "pm2 couldn't start the backend"; fi
+  local code=000 i
+  for ((i = 0; i <= WAIT_SECONDS; i++)); do
+    code=$(http_code "$BACKEND_URL/api/books")
+    [ "$code" = 401 ] && break
+    [ "$i" -lt "$WAIT_SECONDS" ] && sleep 1
+  done
+  if [ "$code" = 401 ]; then ok "backend answers (401 = running, wants a login)"
+  else warn "backend doesn't answer as expected ($code) – see: pm2 logs backend --lines 50"; fi
+}
+check_site() {  # check_site <expected code> <what it means>
+  local code; code=$(http_code "$SITE_URL")
+  if [ "$code" = "$1" ]; then ok "$SITE_URL answers $code ($2)"; else warn "$SITE_URL answers $code, expected $1 ($2)"; fi
+}
+
+# Is the reason for maintenance still there? Prints what's wrong; returns 1 if anything is.
+still_a_problem() {
+  local found=0 dir result
+  echo "Checking whether the problem is fixed …"
+  for dir in $(app_get "$APP" NPM_DIRS); do
+    if ! result=$(npm_audit "$APP" "$dir"); then
+      echo " - npm audit in $dir/ didn't answer (no connection to the npm registry?)"; found=1
+    elif [ "$(echo "$result" | cut -d' ' -f1)" -gt 0 ]; then
+      echo " - critical problems in the $dir libraries: $(echo "$result" | cut -d' ' -f5) – update them (project_maintenance_commands.txt, \"Security\") and deploy"; found=1
+    fi
+  done
+  [ "$found" = 0 ] && echo " - nothing found"
+  return "$found"
+}
+
+case "$command" in
+  status)
+    need_root
+    mode=$(mode_now)
+    if [ "$short" = yes ]; then echo "$mode"; exit 0; fi
+    line=$mode
+    if [ "$mode" != normal ] && [ -r "$SB_STATE/mode" ]; then IFS=$'\t' read -r _ since why < "$SB_STATE/mode"; line+=" since $since – $why"; fi
+    pid=$(as_user "$APP_USER" pm2 pid backend 2>/dev/null | tail -1)
+    if [ -n "$pid" ] && [ "$pid" != 0 ]; then backend=running; else backend=stopped; fi
+    printf '%-12s %s\n' "Storybook:" "$line" "Site:" "$SITE_URL answers $(http_code "$SITE_URL")" "Backend:" "$backend" \
+      "Server:" "$(server_mode) (sudo dk-mode status)"
+    exit 0
+    ;;
+
+  maintenance)
+    need_root
+    if [ "$(mode_now)" = maintenance ]; then echo "Maintenance mode is already on."; exit 0; fi
+    [ -e "$MAINTENANCE_SITE" ] || { echo "The maintenance config $MAINTENANCE_SITE is missing (sudo dk-app-update storybook). Nothing changed." >&2; exit 1; }
+    echo "Switching to maintenance mode ($reason)"
+    backend_stop
+    step "pointing nginx to the maintenance page"
+    ln -sfn "$MAINTENANCE_SITE" "$ENABLED_SITE"
+    if nginx -t >/dev/null 2>&1 && { [ "$(server_mode)" = lockdown ] || systemctl reload nginx; }; then ok "nginx shows the maintenance page"
+    else ln -sfn "$NORMAL_SITE" "$ENABLED_SITE"; warn "nginx didn't accept the maintenance config (sudo nginx -t shows why) – put back the normal one"; fi
+    step "checking"
+    [ "$(server_mode)" = lockdown ] && ok "(the server is in lockdown – nothing to check)" || check_site 503 "maintenance page"
+    remember_reason maintenance
+    notify "Maintenance mode ON" "The storybook shows its \"kurze Pause\" page and its backend is stopped. Reason: $reason. Back with: sudo storybook-mode normal" high construction
+    ;;
+
+  normal)
+    need_root
+    if [ "$(mode_now)" = normal ]; then echo "The storybook is already in normal mode."; exit 0; fi
+    if [ "$force" = no ] && ! still_a_problem; then
+      echo; echo "Staying in maintenance mode. Fix the above first, or switch anyway with: sudo storybook-mode normal --force"; exit 1
+    fi
+    [ "$force" = yes ] && accept_current
+    echo "Switching from maintenance back to normal"
+    if [ "$(server_mode)" = lockdown ]; then echo "   (the server is in lockdown: the backend starts with sudo dk-mode normal)"
+    else backend_start; fi
+    step "pointing nginx to the normal config"
+    ln -sfn "$NORMAL_SITE" "$ENABLED_SITE"
+    if nginx -t >/dev/null 2>&1 && { [ "$(server_mode)" = lockdown ] || systemctl reload nginx; }; then ok "nginx uses the normal config"; else warn "nginx didn't accept the normal config – sudo nginx -t shows why"; fi
+    step "checking"
+    [ "$(server_mode)" = lockdown ] || check_site 200 "the storybook"
+    rm -f "$SB_STATE/mode"
+    if [ "$problems" = 0 ]; then notify "Back to normal" "The storybook is reachable again (was: maintenance)." default white_check_mark
+    else notify "Back to normal: $problems problem(s)" "Leaving maintenance mode: some steps didn't work – log in and run: sudo storybook-mode status" high warning; fi
+    ;;
+
+  stop)
+    need_root
+    backend_stop
+    ;;
+
+  start)
+    need_root
+    if [ "$(mode_now)" = maintenance ]; then echo "Maintenance mode is on – the backend stays stopped (sudo storybook-mode normal)."; exit 0; fi
+    backend_start
+    ;;
+
+  *)
+    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+    exit 2
+    ;;
+esac
+
+echo
+if [ "$problems" = 0 ]; then echo "Done."; else echo "Done, with $problems warning(s) – see above."; exit 1; fi

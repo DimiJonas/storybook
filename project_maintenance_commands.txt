@@ -1,0 +1,412 @@
+###################################################################################################
+# RUNNING THE STORYBOOK – everyday commands, backups, emergencies
+#
+# Where to run each command:
+#   (server)  on the server, logged in as appuser
+#   (laptop)  on your own computer (development copy in ~/storybook)
+#
+# Setting up a new server: dk-srv's setup-commands.txt, then project_setup_commands.txt.
+# More background: ops/README.md. The server's own commands (security check, hardening, lockdown,
+# notifications, fail2ban): dk-srv's maintenance-commands.txt (https://github.com/DimiJonas/dk-srv).
+#
+# The storybook's address is only on the server (/etc/storybook/site.conf); commands that need it
+# read it from there: $(. /etc/storybook/site.conf; echo $DOMAIN)
+###################################################################################################
+
+
+# =================================================================================================
+# Quick health check
+# =================================================================================================
+
+# (server) backend running? ("backend" with status "online")
+pm2 list
+
+# (server) nginx, database and fail2ban running? (each "active")
+systemctl is-active nginx postgresql fail2ban
+
+# (server) the site answers? (200; 503 = maintenance mode)
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)
+
+# (server) last night's backup worked? (ends with "backup done")
+tail -3 ~/backups/storybook/backup.log
+
+# (server) free disk space, and how big photos and backups are
+df -h /
+du -sh /etc/storybook/uploads ~/backups/storybook
+
+# (server) the storybook's mode (normal / maintenance), and the server's (normal / lockdown) with the
+# last nightly security check
+sudo storybook-mode status
+sudo dk-mode status
+
+
+# =================================================================================================
+# Deploying an update
+# =================================================================================================
+
+# (laptop) after changes that include a database migration: update the structure snapshot and
+# commit it together with the change (never run db:schema on the server)
+cd ~/storybook/server && npm run migrate && npm run db:schema
+
+# (laptop) send the changes to the repository
+cd ~/storybook && git add -A && git commit -m "..." && git push
+
+# (server) get the changes
+cd ~/storybook && git pull
+
+# (server) if git pull complains about a changed schema.sql: throw that change away, pull again
+git checkout -- schema.sql && git pull
+
+# (server) backend: install libraries, apply new migrations, restart
+cd ~/storybook/server && npm ci && npm run migrate && pm2 restart backend
+
+# (server) app: build and copy to nginx
+cd ~/storybook/client && npm ci && ./update_nginx.sh
+
+# (server) only if something in ops/root/ changed (git pull lists the files: the nginx configs,
+# the maintenance page, storybook-mode, app.conf, logrotate.conf): root's own copy is pulled, it
+# shows what changed and asks, then installs (fills in your domain, checks, reloads nginx; the old
+# config stays if nginx says no)
+sudo dk-app-update storybook
+
+
+# =================================================================================================
+# Logs
+# =================================================================================================
+
+# (server) the backend's last 100 lines (logins, errors, ...); add --err for errors only
+pm2 logs backend --lines 100 --nostream
+
+# (server) follow the backend's log live (Ctrl+C to stop)
+pm2 logs backend
+
+# (server) nginx: requests and errors
+sudo tail -50 /var/log/nginx/access.log
+sudo tail -50 /var/log/nginx/error.log
+
+# Log rotation (ops/README.md, "Logs and log rotation"): every hour, old copies are <name>.1,
+# <name>.2.gz, … (backend: 14 days; backup.log: a year)
+
+# (server) the backend's older logs: yesterday's (or the last 20 MB), then older ones
+less ~/.pm2/logs/backend-out.log.1
+zless ~/.pm2/logs/backend-out.log.2.gz
+
+# (server) search all of the backend's kept logs, e.g. for failed logins
+zgrep -h "Failed login" ~/.pm2/logs/backend-out.log*
+
+# (server) how much space the logs take
+du -sh ~/.pm2/logs ~/backups/storybook/backup.log* /var/log/nginx; sudo du -sh /var/log/dk-srv
+
+# (server) what the rotation would do now (changes nothing); its error messages (normally empty)
+sudo logrotate --debug --state /var/lib/dk-srv/logrotate.status /etc/dk-srv/logrotate.conf
+sudo cat /var/log/dk-srv/logrotate.log
+
+# (server) rotate now, whatever the time or size (e.g. to try it)
+sudo logrotate --force --state /var/lib/dk-srv/logrotate.status /etc/dk-srv/logrotate.conf
+
+
+# =================================================================================================
+# Backend: restart, stop, start
+# =================================================================================================
+
+# (server) restart (e.g. after changing server/.env)
+pm2 restart backend
+
+# (server) stop / start again; `pm2 save` makes pm2 remember it for the next reboot
+pm2 stop backend && pm2 save
+pm2 start backend && pm2 save
+
+
+# =================================================================================================
+# After a reboot of the server
+# =================================================================================================
+
+# Nothing to do normally: PostgreSQL, nginx, fail2ban, the firewall, cron (backups) and pm2
+# (which starts the backend) all start by themselves. Maintenance mode and dk-srv's lockdown stay on
+# after a reboot if they were on before.
+
+# (server) check
+pm2 list
+systemctl is-active nginx postgresql fail2ban
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)
+
+# (server) only if `pm2 list` is empty: start the saved processes ...
+pm2 resurrect
+
+# (server) ... and if it's still empty: start the backend and set up the automatic start again
+# (`pm2 startup` prints a "sudo env PATH=..." command – run that printed command)
+cd ~/storybook/server && pm2 start src/index.js --name backend
+pm2 startup
+pm2 save
+
+# (server) is a restart waiting after automatic updates? (e.g. new kernel)
+[ -f /var/run/reboot-required ] && cat /var/run/reboot-required.pkgs || echo "no restart needed"
+
+
+# =================================================================================================
+# Backups
+# =================================================================================================
+
+# (server) make a backup right now (same as the nightly one; replaces today's dump if it exists)
+~/storybook/ops/backup.sh
+
+# (server) an extra database dump that's kept forever (e.g. before deleting something by hand),
+# encrypted like the nightly ones; the nightly cleanup only removes files named storybook-*
+f=~/backups/storybook/db/manual-$(date +%F-%H%M).dump
+pg_dump -U webapp -h localhost -Fc -f "$f" storybook && age -r "$(sed -n 's/^AGE_RECIPIENT=//p' /etc/storybook/backup.conf)" -o "$f.age" "$f" && rm "$f"
+
+# (server) which dumps exist; the last restore tests (monthly, automatic)
+ls -lh ~/backups/storybook/db/
+tail -3 ~/backups/storybook/restore-test.log
+
+# (server) run the restore test now (restores into storybook_restoretest, compares, empties it again)
+FORCE_RESTORE_TEST=1 ~/storybook/ops/backup.sh
+
+# (laptop) copy all new backups (encrypted dumps + photos) to ~/storybook-backups/ and check that
+# the newest one decrypts with your key (~/.config/storybook/backup-key.txt)
+~/storybook/ops/pull-backup.sh
+
+# (laptop) decrypt a backup for restoring (newest, or the one of a day) – then see
+# ops/README.md, "Restoring"; delete the decrypted folder afterwards
+~/storybook/ops/decrypt-backup.sh ~/storybook-backups ~/storybook-restore
+~/storybook/ops/decrypt-backup.sh ~/storybook-backups ~/storybook-restore 2026-10-01
+
+
+# =================================================================================================
+# Database: open it
+# =================================================================================================
+
+# (server) open the database (no password question thanks to ~/.pgpass); \q to leave
+psql -U webapp -h localhost -d storybook
+
+# Inside psql: each storybook is its own schema book_1, book_2, ... – choose one first, e.g.:
+#   SET search_path TO book_1;
+#   SELECT id, date, end_date, title FROM memories ORDER BY date DESC LIMIT 20;
+
+
+# =================================================================================================
+# Deleting a memory (only possible here, not in the app)
+# Example: memory 42 in storybook 1. Its photos are deleted too. The photo originals stay in the
+# backup copy (~/backups/storybook/uploads), the memory itself in older database dumps.
+# =================================================================================================
+
+# (server) 1. make a dump first, so it can be undone
+pg_dump -U webapp -h localhost -Fc -f ~/backups/storybook/db/manual-$(date +%F-%H%M).dump storybook
+
+# (server) 2. find the memory's number (id) – e.g. by a word in the title
+psql -U webapp -h localhost -d storybook -c "SELECT id, date, end_date, title FROM book_1.memories WHERE title ILIKE '%hamburg%'"
+
+# (server) 3. note the names of its photo files in a list
+psql -U webapp -h localhost -d storybook -tAc "SELECT filename FROM book_1.images WHERE memory_id = 42" > ~/memory-42-photos.txt
+cat ~/memory-42-photos.txt
+
+# (server) 4. delete the memory (its photos, tags, perspectives and history rows go with it); "DELETE 1" = done
+psql -U webapp -h localhost -d storybook -c "DELETE FROM book_1.memories WHERE id = 42"
+
+# (server) 5. delete its photo files (original + small versions) and the list
+cd /etc/storybook/uploads/book_1 && while read -r f; do rm -fv -- "$f" "thumb/$f.webp" "medium/$f.webp"; done < ~/memory-42-photos.txt
+rm ~/memory-42-photos.txt
+
+# Single photos of a memory: remove them in the app's edit form (×).
+# Kapitel are deleted in the app (⋮ → Kapitel bearbeiten); their memories stay.
+
+
+# =================================================================================================
+# Photos
+# =================================================================================================
+
+# (server) recreate missing small versions (thumb/, medium/) of all photos, e.g. after a restore
+cd ~/storybook/server && node scripts/create-thumbnails.js
+
+# (server) fill in width/height of photos that don't have them (once after step 9; safe to repeat)
+cd ~/storybook/server && npm run photos:sizes
+
+# (server) photo towns: shows which town each not yet looked-at photo is in (changes nothing) ...
+cd ~/storybook/server && npm run photos:places -- --dry-run
+
+# (server) ... and does it: town = the photo's place, GPS position removed from the file, memories
+# without places get their photos' towns. Once after step 11; again if uploads said "place search
+# not reachable" (pm2 logs). Removing positions can't be undone.
+cd ~/storybook/server && npm run photos:places
+
+# (server) is exiftool there? (needed for the above and for uploads)
+exiftool -ver
+
+# (server) a photo still has a position? (prints nothing = none)
+exiftool -n -GPSLatitude -GPSLongitude /etc/storybook/uploads/book_1/<file>
+
+# (server) map pictures kept by nginx: how much space they use – and emptying it (they're fetched
+# again when needed)
+sudo du -sh /var/cache/nginx/storybook-tiles
+sudo rm -rf /var/cache/nginx/storybook-tiles/* && sudo systemctl reload nginx
+
+# (server) check for files that aren't photos (should print nothing)
+find /etc/storybook/uploads -type f -not -iregex '.*\.\(jpe?g\|png\|webp\|gif\|heic\|heif\|avif\)'
+
+
+# =================================================================================================
+# Users (logins)
+# =================================================================================================
+
+# (server) show all logins
+cd ~/storybook/server && npm run user:password -- --list
+
+# (server) create a login, or set a new password (asks twice, hidden; at least 12 characters)
+cd ~/storybook/server && npm run user:password -- anna
+
+# (server) lock a login (nobody can log in with it any more; unlock = set a new password)
+cd ~/storybook/server && npm run user:password -- anna --lock
+
+# Users are never deleted: their memories belong to them (the database refuses it).
+# A new password or --lock also ends that user's running logins (on every device).
+
+# (server) the running logins: who, which device ("Android · Chrome"), since, last used, until
+cd ~/storybook/server && npm run sessions
+
+# (server) end all logins of one person (e.g. a lost phone) / of everyone – they stop working
+# within half a minute; the app then shows the login page
+cd ~/storybook/server && npm run sessions -- --end anna
+cd ~/storybook/server && npm run sessions -- --end-all
+
+
+# =================================================================================================
+# Storybooks
+# =================================================================================================
+
+# (server) create a new, empty storybook (appears in the app right away)
+cd ~/storybook/server && npm run storybook:create -- "Familie"
+
+# (server) list them: book_1, book_2, ...
+psql -U webapp -h localhost -d storybook -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'book\_%' ORDER BY 1"
+
+# Renaming: in the app (⋮ menu → "Storybook umbenennen").
+
+# (server) delete a whole storybook, e.g. book_2 – with ALL its memories and photos.
+# Make a dump first (see "Backups"), then:
+psql -U webapp -h localhost -d storybook -c 'DROP SCHEMA book_2 CASCADE'
+rm -r /etc/storybook/uploads/book_2
+
+
+# =================================================================================================
+# Modes – the normal way: storybook-mode <mode>
+#   normal       the storybook runs as usual
+#   maintenance  backend stopped, every address shows the "kurze Pause" page (503)
+# (The whole web server off – lockdown – is the server's: sudo dk-mode lockdown, dk-srv.)
+# Each step is checked, and your phone gets a notification. Every mode survives reboots.
+# `normal` refuses while the reason is still there (it says what); --force switches anyway and
+# accepts the problems found as false alarms (the nightly check won't switch on again for them).
+# =================================================================================================
+
+# (server) short summary: mode (and why, since when), site, backend, the server's mode
+sudo storybook-mode status
+
+# (server) maintenance mode (the reason is shown in the notification and in status)
+sudo storybook-mode maintenance --reason "planned work"
+
+# (server) back to normal
+sudo storybook-mode normal
+sudo storybook-mode normal --force
+
+# The same steps by hand, if the script itself ever doesn't work: the next section.
+
+
+# =================================================================================================
+# Maintenance mode BY HAND (the storybook shows "kurze Pause", its own code is switched off)
+# For: a security problem in the storybook's libraries or in Node.js, or planned work.
+# What stays reachable: nginx sending one static page, and SSH. Survives reboots.
+# =================================================================================================
+
+# (server) which mode is on? ".../storybook" = normal, ".../storybook-maintenance" = maintenance
+readlink /etc/nginx/sites-enabled/storybook
+
+# ---------- switch ON ----------
+
+# (server) 1. stop the backend (and remember that for reboots)
+pm2 stop backend && pm2 save
+
+# (server) 2. point nginx to the maintenance config, check it, apply it
+sudo ln -sfn /etc/nginx/sites-available/storybook-maintenance /etc/nginx/sites-enabled/storybook
+sudo nginx -t && sudo systemctl reload nginx
+
+# (server) 3. check: 503 (= maintenance) – also for /api and photos
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)/api/books
+
+# ---------- switch OFF (after the problem is fixed, e.g. updated libraries deployed) ----------
+
+# (server) 1. no critical problems left in the libraries (should say "found 0 vulnerabilities"
+# or only lower levels)
+cd ~/storybook/server && npm audit --omit=dev
+cd ~/storybook/client && npm audit --omit=dev
+
+# (server) 2. start the backend and remember that; check: 401 (= running)
+pm2 start backend && pm2 save
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/api/books
+
+# (server) 3. point nginx back to the normal config, check it, apply it
+sudo ln -sfn /etc/nginx/sites-available/storybook /etc/nginx/sites-enabled/storybook
+sudo nginx -t && sudo systemctl reload nginx
+
+# (server) 4. check: 200
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)
+
+
+# =================================================================================================
+# Security (the storybook's part – the server's: dk-srv's maintenance-commands.txt)
+# =================================================================================================
+
+# (server) the nightly security check (dk-srv) – it runs npm audit for server/ and client/ too:
+# run it now, shows each step and a summary at the end
+sudo dk-security-check
+
+# (server) known problems in the libraries the app uses (server, and client parts that run in
+# the browser); "critical" in these = maintenance mode until updated
+cd ~/storybook/server && npm audit --omit=dev
+cd ~/storybook/client && npm audit --omit=dev
+
+# (laptop) updating libraries: show outdated ones, update within the allowed versions, fix
+# known problems – then test, commit and deploy (see "Deploying an update")
+cd ~/storybook/server && npm outdated && npm update && npm audit fix
+cd ~/storybook/client && npm outdated && npm update && npm audit fix
+
+# (server) the storybook's settings and its registration with dk-srv
+cat /etc/storybook/site.conf
+cat /etc/dk-srv/apps.d/storybook.conf
+
+# (server) fail2ban: IPs that hammered the login (rate limit) – unban one (e.g. your own)
+sudo fail2ban-client status nginx-limit-req
+sudo fail2ban-client set nginx-limit-req unbanip 1.2.3.4
+
+# (server) a change in /etc/storybook made on purpose by hand (e.g. backup.conf): tell the file
+# integrity check, so it doesn't send an alert
+sudo dk-aide-check expect /etc/storybook/backup.conf
+
+
+# =================================================================================================
+# Emergency: end logins (e.g. a phone was lost or stolen)
+# =================================================================================================
+
+# (server) 1. which logins are running (the lost phone is e.g. "Android · Chrome")
+cd ~/storybook/server && npm run sessions
+
+# (server) 2. end that person's logins on every device (or everyone's: --end-all)
+cd ~/storybook/server && npm run sessions -- --end anna
+
+# (server) 3. if a password may be known to someone else: set a new one (ends their logins too)
+cd ~/storybook/server && npm run user:password -- anna
+
+# (server) photos are only shown to logged-in visitors (nginx asks the backend first): check
+# that a photo address without login is refused – 401
+curl -s -o /dev/null -w '%{http_code}\n' https://$(. /etc/storybook/site.conf; echo $DOMAIN)/uploads/book_1/x.jpg
+
+
+# =================================================================================================
+# HTTPS certificate
+# =================================================================================================
+
+# (server) which certificates exist and until when they are valid (renewed automatically
+# 30 days before they expire)
+sudo certbot certificates
+
+# (server) test the automatic renewal (changes nothing)
+sudo certbot renew --dry-run

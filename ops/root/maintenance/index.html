@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<!-- Maintenance page: shown for every address while the storybook is in maintenance mode
+     (see project_maintenance_commands.txt). Copied to /etc/storybook/maintenance/index.html.
+     Everything is in this one file – in maintenance mode nginx serves nothing else. -->
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Storybook – kurze Pause</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        box-sizing: border-box;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #fff;
+        text-align: center;
+        background:
+          radial-gradient(ellipse 70% 30% at 0% 92%, rgb(243 147 226 / 0.85), transparent 70%),
+          radial-gradient(ellipse 60% 28% at 100% 100%, rgb(240 155 227 / 0.8), transparent 70%),
+          radial-gradient(ellipse 50% 22% at 15% 8%, rgb(129 152 244 / 0.7), transparent 70%),
+          linear-gradient(165deg, #8198f4 0%, #927cf1 38%, #8a78e4 62%, #6170e8 100%);
+      }
+      main { max-width: 28rem; }
+      .icon { font-size: 4rem; line-height: 1; }
+      h1 { font-size: 1.8rem; margin: 1rem 0 0.75rem; text-shadow: 0 2px 14px rgb(55 40 140 / 0.4); }
+      p { font-size: 1.05rem; line-height: 1.5; margin: 0.5rem 0; opacity: 0.95; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="icon" aria-hidden="true">📖🔧</div>
+      <h1>Storybook macht gerade eine kurze Pause</h1>
+      <p>Eure Erinnerungen sind sicher – es wird nur gerade etwas am Storybook gemacht.</p>
+      <p>Bitte schau später nochmal vorbei.</p>
+    </main>
+  </body>
+</html>
