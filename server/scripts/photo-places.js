@@ -7,6 +7,7 @@
 //
 //   npm run photos:places -- --dry-run   only shows which towns it finds (changes nothing)
 //   npm run photos:places                does it
+//   (on the server, as the backend's user: sudo storybook-run photos:places … – the same, without the "--")
 //
 // Run on the server, from the server folder, as the user that runs the app (not with sudo).
 // Needs exiftool (sudo apt install libimage-exiftool-perl). Safe to run again: photos already

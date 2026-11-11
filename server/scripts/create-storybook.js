@@ -1,6 +1,7 @@
 // Creates a new, empty storybook:
 //
 //   npm run storybook:create -- "Familie"
+//   (on the server, as the backend's user: sudo storybook-run storybook:create … – the same, without the "--")
 //
 // Creates the schema book_<next number> with all tables (storybook migrations), sets the name
 // and creates its photo folder. The new storybook then appears in the app right away
@@ -17,7 +18,7 @@ const name = (process.argv[2] || '').trim();
 
 const main = async () => {
   if (!name || name.length > 100) {
-    console.error('Usage: npm run storybook:create -- "Name of the storybook"   (at most 100 characters)');
+    console.error('Usage: npm run storybook:create -- "Name of the storybook"   (at most 100 characters; on the server: sudo storybook-run storybook:create "Name")');
     process.exit(1);
   }
   const db = new Client(dbConfig());

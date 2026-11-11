@@ -1081,7 +1081,7 @@ const locateUploadedPhotos = async (req, memoryId, images) => {
       for (const image of images) {
         const result = await locatePhoto(db, req.book.dir, image, req.user.id);
         image.place_id = result.place?.id ?? null;
-        if (result.status === 'pending') console.log(`Photo ${image.filename}: place search not reachable – npm run photos:places tries again`);
+        if (result.status === 'pending') console.log(`Photo ${image.filename}: place search not reachable – sudo storybook-run photos:places tries again`);
         if (result.status === 'unreadable') console.log(`Photo ${image.filename}: exiftool can't read it (${result.error})`);
       }
       const added = await addPhotoPlaces(db, memoryId);

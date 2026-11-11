@@ -2,8 +2,8 @@
 // in every storybook's photo folder (uploads/book_<n>/). Safe to run again: existing versions
 // are skipped. Useful after restoring photos from a backup (the backup has only the originals).
 //
-// Run from the server folder (as the user that runs the app, not with sudo):
-//   node scripts/create-thumbnails.js
+//   npm run photos:thumbnails
+//   (on the server, as the backend's user: sudo storybook-run photos:thumbnails)
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });

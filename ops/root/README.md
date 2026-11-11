@@ -10,16 +10,28 @@ sudo dk-app-update storybook https://github.com/DimiJonas/storybook   # the firs
 sudo dk-app-update storybook                                          # after a deploy that changed ops/root/
 ```
 
-It shows what changed in this folder since the last time and asks before installing. The app's
-own copy (`~/storybook`, owned by the user the backend runs as) is only used to run the app – so a
-hole in the app could change that copy, but never what root runs.
+It shows what changed in this folder since the last time and asks before installing. The code the
+backend runs (`/srv/storybook`, a git clone of the admin user) is never run by root – so a hole in
+the app could at most reach the backend's own user, never what root runs.
 
 | File | Installed as | What |
 |---|---|---|
-| `install.sh` | – | asks for the address once (`/etc/storybook/site.conf`), installs the rest |
+| `install.sh` | – | asks for the address once (`/etc/storybook/site.conf`), creates the backend's user, installs the rest |
+| `storybook.service` | `/etc/systemd/system/storybook.service` | the backend: as the user `storybook`, in a sandbox (template, folder filled in) |
+| `storybook-run` | `/usr/local/sbin/storybook-run` | the backend's admin scripts as its user: `sudo storybook-run sessions` … |
+| `storybook-mode` | `/usr/local/sbin/storybook-mode` | `status`, `maintenance`, `normal`, and `stop`/`start` for dk-srv's lockdown |
 | `nginx/storybook.conf` | `/etc/nginx/sites-available/storybook` | the site (template, address filled in) |
 | `nginx/storybook-maintenance.conf` | `…/storybook-maintenance` | maintenance mode: every address gets the pause page (503) |
 | `maintenance/index.html` | `/etc/storybook/maintenance/` | the "kurze Pause" page |
-| `storybook-mode` | `/usr/local/sbin/storybook-mode` | `status`, `maintenance`, `normal`, and `stop`/`start` for dk-srv's lockdown |
-| `app.conf` | `/etc/dk-srv/apps.d/storybook.conf` | how dk-srv knows the app: user, folders, npm audit, address, backups, databases, AIDE |
+| `app.conf` | `/etc/dk-srv/apps.d/storybook.conf` | how dk-srv knows the app: user, service, code, npm audit, address, backups, databases, AIDE |
 | `logrotate.conf` | `/etc/dk-srv/logrotate.d/storybook` | the backend's and the backup's logs |
+
+What `install.sh` also sets each time (and puts right if it changed):
+- the user **`storybook`**: a system user without password, shell or home folder, in the group
+  `dk-notify` (it may read the ntfy topic – the backend sends notifications too)
+- `/srv/storybook/server/.env`: owned by `storybook`, `600` – only the backend reads the secrets
+- `/etc/storybook/uploads`: owned by `storybook` (it writes the photos; folders `755`, files `644`,
+  so nginx can serve them)
+- `/var/log/storybook/`: `root:adm`, `750` – systemd writes the backend's output there
+- the service is started (and starts after a reboot) – unless maintenance mode or dk-srv's
+  lockdown is on

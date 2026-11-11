@@ -34,7 +34,7 @@ in English.
 | ------- | ----------------------------------------------------------- |
 | App     | React, Vite, Tailwind CSS, Leaflet; a PWA (`client/`)       |
 | Backend | Node.js, Express, PostgreSQL , sharp for images (`server/`) |
-| Server  | Ubuntu, nginx, pm2, shell scripts (`ops/`); the server itself: [dk-srv](https://github.com/DimiJonas/dk-srv) |
+| Server  | Ubuntu, nginx, a sandboxed systemd service, shell scripts (`ops/`); the server itself: [dk-srv](https://github.com/DimiJonas/dk-srv) |
 
 Database changes are plain SQL migrations (`server/migrations/`); `schema.sql` is a snapshot of the
 current structure.
@@ -62,7 +62,9 @@ and its `HARDENING.md` explains every mechanism: what, why, and how to check it 
 - **Uploads:** only real images are accepted (file name and content are checked), and they get
   random names. GPS positions are removed from photos.
 - **Backend:** reachable only from nginx on the same machine. It refuses to start without proper
-  secrets and the site's address.
+  secrets and the site's address. It runs as **its own user** (no login, no sudo, can't change its
+  code) in a **systemd sandbox** – read-only file system except the photos, no privileges, only
+  the system calls it needs: `systemd-analyze security` rates it 1.4 "OK" (without: 9.0 "UNSAFE").
 - **Map tiles:** fetched through nginx and cached there, so OpenStreetMap never sees who looks at
   which area.
 

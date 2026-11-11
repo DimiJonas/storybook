@@ -9,8 +9,8 @@
     "migrate": "node scripts/migrate.js",
     "db:schema": "node scripts/dump-schema.js",
     "storybook:create": "node scripts/create-storybook.js",
-    "photos:move-to-storybook": "node scripts/move-photos-to-storybook.js",
     "photos:sizes": "node scripts/photo-sizes.js",
+    "photos:thumbnails": "node scripts/create-thumbnails.js",
     "photos:places": "node scripts/photo-places.js",
     "user:password": "node scripts/set-password.js",
     "sessions": "node scripts/sessions.js"

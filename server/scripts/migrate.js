@@ -4,6 +4,7 @@
 //
 //   npm run migrate              apply new migrations
 //   npm run migrate -- --list    only show which are applied / pending
+//   (on the server, as the backend's user: sudo storybook-run migrate … – the same, without the "--")
 //
 // Afterwards, on your computer, update the schema snapshot:  npm run db:schema
 const path = require('path');

@@ -5,6 +5,7 @@
 //   npm run user:password -- anna --lock     lock "anna" out (random password nobody knows);
 //                                           unlock by setting a new password again
 //   npm run user:password -- --list         show all logins
+//   (on the server, as the backend's user: sudo storybook-run user:password … – the same, without the "--")
 //
 // Users are never deleted: their memories belong to them (and the database refuses it).
 // A new password or --lock also ends all running logins of that user (on every device; the app
@@ -44,7 +45,7 @@ const askHidden = (question) =>
 
 const main = async () => {
   if (!list && (!username || !/^[^\s]{1,50}$/.test(username))) {
-    console.error('Usage: npm run user:password -- <username> [--lock]    or    npm run user:password -- --list');
+    console.error('Usage: npm run user:password -- <username> [--lock]    or    npm run user:password -- --list\n(on the server: sudo storybook-run user:password <username> [--lock])');
     process.exitCode = 1;
     return;
   }

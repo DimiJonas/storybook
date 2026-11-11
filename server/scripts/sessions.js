@@ -3,6 +3,7 @@
 //   npm run sessions                    list the running logins (who, device, since, last used)
 //   npm run sessions -- --end anna       end all logins of "anna" (on every device)
 //   npm run sessions -- --end-all       end everyone's logins (everyone logs in again)
+//   (on the server, as the backend's user: sudo storybook-run sessions … – the same, without the "--")
 //
 // Ending works within half a minute (the backend remembers checked logins that long). Logging out
 // in the app ends that one login right away. A new password (npm run user:password) ends the
@@ -19,7 +20,7 @@ const day = (d) => new Date(d).toLocaleString('de-DE', { dateStyle: 'short', tim
 
 const main = async () => {
   if ((args.includes('--end') && !endUser) || args.some((a) => a.startsWith('--') && !['--end', '--end-all'].includes(a))) {
-    console.error('Usage: npm run sessions    or    npm run sessions -- --end <username>    or    npm run sessions -- --end-all');
+    console.error('Usage: npm run sessions    or    npm run sessions -- --end <username>    or    npm run sessions -- --end-all\n(on the server: sudo storybook-run sessions [--end <username> | --end-all])');
     process.exitCode = 1;
     return;
   }

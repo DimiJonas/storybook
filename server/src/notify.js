@@ -1,17 +1,14 @@
 // Push notifications to your phone through ntfy (step 13) – the backend's own messages (e.g. an
 // account locked after many failed logins). The server's scripts (dk-srv) use dk-notify; both read
 // the topic from the same file, /etc/dk-srv/notify.conf (NTFY_TOPIC=…, optional NTFY_SERVER=…),
-// written by dk-srv's install.sh (before dk-srv: /etc/storybook/notify.conf, still read if the new
-// one isn't there). Another file can be given with NOTIFY_CONF (tests).
+// written by dk-srv's install.sh, readable for the group dk-notify (the backend's user is in it).
+// Another file can be given with NOTIFY_CONF (tests).
 // Without that file (e.g. on the laptop) nothing is sent – the message only goes to the log.
 // Sending never throws and never makes a request wait for ntfy.
 
 const fs = require('fs');
 
-const confPath = () => {
-  if (process.env.NOTIFY_CONF) return process.env.NOTIFY_CONF;
-  return fs.existsSync('/etc/dk-srv/notify.conf') ? '/etc/dk-srv/notify.conf' : '/etc/storybook/notify.conf';
-};
+const confPath = () => process.env.NOTIFY_CONF || '/etc/dk-srv/notify.conf';
 const PRIORITIES = { min: 1, low: 2, default: 3, high: 4, urgent: 5 };
 
 // read every time (it's rare), so a changed topic works without a restart

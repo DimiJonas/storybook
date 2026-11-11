@@ -25,7 +25,7 @@ set -u
 : "${SB_STATE:=/var/lib/storybook}"
 : "${BACKEND_URL:=http://127.0.0.1:3001}"
 APP=storybook
-APP_USER=$(app_get "$APP" APP_USER); : "${APP_USER:=appuser}"
+SERVICE=$(app_get "$APP" SERVICE); : "${SERVICE:=storybook.service}"
 SITE_URL=$(app_get "$APP" SITE_URL)
 
 command=${1:-}
@@ -54,14 +54,15 @@ mode_now() {
 }
 remember_reason() { mkdir -p "$SB_STATE"; printf '%s\t%s\t%s\n' "$1" "$(date '+%F %T')" "$reason" > "$SB_STATE/mode"; }
 
+# "disable"/"enable": the service stays stopped (or starts) after a reboot, too
 backend_stop() {
-  step "stopping the backend (pm2) and remembering that for reboots"
-  if as_user "$APP_USER" pm2 stop backend >/dev/null && as_user "$APP_USER" pm2 save >/dev/null; then ok "backend stopped"
-  else warn "pm2 couldn't stop the backend – check with: pm2 list"; fi
+  step "stopping the backend ($SERVICE) and remembering that for reboots"
+  if systemctl disable --now --quiet "$SERVICE"; then ok "backend stopped"
+  else warn "the backend couldn't be stopped – check with: systemctl status $SERVICE"; fi
 }
 backend_start() {
-  step "starting the backend (pm2) and remembering that for reboots"
-  if ! { as_user "$APP_USER" pm2 start backend >/dev/null && as_user "$APP_USER" pm2 save >/dev/null; }; then warn "pm2 couldn't start the backend"; fi
+  step "starting the backend ($SERVICE) and remembering that for reboots"
+  systemctl enable --now --quiet "$SERVICE" || warn "the backend couldn't be started – see: systemctl status $SERVICE"
   local code=000 i
   for ((i = 0; i <= WAIT_SECONDS; i++)); do
     code=$(http_code "$BACKEND_URL/api/books")
@@ -69,7 +70,7 @@ backend_start() {
     [ "$i" -lt "$WAIT_SECONDS" ] && sleep 1
   done
   if [ "$code" = 401 ]; then ok "backend answers (401 = running, wants a login)"
-  else warn "backend doesn't answer as expected ($code) – see: pm2 logs backend --lines 50"; fi
+  else warn "backend doesn't answer as expected ($code) – see: tail -50 /var/log/storybook/backend-error.log"; fi
 }
 check_site() {  # check_site <expected code> <what it means>
   local code; code=$(http_code "$SITE_URL")
@@ -98,8 +99,7 @@ case "$command" in
     if [ "$short" = yes ]; then echo "$mode"; exit 0; fi
     line=$mode
     if [ "$mode" != normal ] && [ -r "$SB_STATE/mode" ]; then IFS=$'\t' read -r _ since why < "$SB_STATE/mode"; line+=" since $since – $why"; fi
-    pid=$(as_user "$APP_USER" pm2 pid backend 2>/dev/null | tail -1)
-    if [ -n "$pid" ] && [ "$pid" != 0 ]; then backend=running; else backend=stopped; fi
+    if systemctl is-active --quiet "$SERVICE"; then backend="running ($SERVICE)"; else backend="stopped ($SERVICE)"; fi
     printf '%-12s %s\n' "Storybook:" "$line" "Site:" "$SITE_URL answers $(http_code "$SITE_URL")" "Backend:" "$backend" \
       "Server:" "$(server_mode) (sudo dk-mode status)"
     exit 0

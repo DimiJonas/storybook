@@ -11,10 +11,14 @@
 #      installs them as /etc/nginx/sites-available/storybook and …/storybook-maintenance, plus the
 #      "kurze Pause" page (/etc/storybook/maintenance/) – checked with nginx -t, everything put back
 #      if nginx doesn't accept it; which of the two is switched on (maintenance mode) isn't changed
-#   3. installs the mode command: /usr/local/sbin/storybook-mode (root-owned)
-#   4. tells dk-srv about the storybook: /etc/dk-srv/apps.d/storybook.conf (app.conf filled in) –
+#   3. the backend's own user "storybook" (no password, no shell, no home – a system user), the
+#      rights of what it reads and writes (server/.env: only it; the photos: it writes), its log
+#      folder /var/log/storybook, and its service /etc/systemd/system/storybook.service (started,
+#      unless maintenance mode or dk-srv's lockdown is on)
+#   4. the commands: /usr/local/sbin/storybook-mode, /usr/local/sbin/storybook-run (root-owned)
+#   5. tells dk-srv about the storybook: /etc/dk-srv/apps.d/storybook.conf (app.conf filled in) –
 #      the nightly check, the weekly report, the file integrity check and the hardening use it
-#   5. the storybook's log rotation: /etc/dk-srv/logrotate.d/storybook (logrotate.conf)
+#   6. the storybook's log rotation: /etc/dk-srv/logrotate.d/storybook (logrotate.conf)
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then echo "Run by dk-srv: sudo dk-app-update storybook" >&2; exit 1; fi
@@ -27,9 +31,13 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 . "$DK_LIB/nginx-lib.sh"
 : "${SB_ETC:=/etc/storybook}"
 : "${LETSENCRYPT_DIR:=/etc/letsencrypt}"
-: "${APP_USER:=appuser}"   # the user the backend runs as (until it gets its own account)
-APP_HOME=$(getent passwd "$APP_USER" | cut -d: -f6)
-[ -n "$APP_HOME" ] || { echo "User $APP_USER doesn't exist." >&2; exit 1; }
+: "${APP_USER:=storybook}"          # the backend's own user
+: "${RUNTIME_DIR:=/srv/storybook}"     # the code (a git clone of the deploy user)
+: "${UPLOADS:=$SB_ETC/uploads}"
+DEPLOY_USER=$ADMIN_USER                # who deploys: owns the code, runs the backups (dk-srv.conf)
+DEPLOY_HOME=$(getent passwd "$DEPLOY_USER" | cut -d: -f6)
+[ -n "$DEPLOY_HOME" ] || { echo "User $DEPLOY_USER (ADMIN_USER in $DK_ETC/dk-srv.conf) doesn't exist." >&2; exit 1; }
+[ -f "$RUNTIME_DIR/server/package.json" ] || { echo "The code isn't in $RUNTIME_DIR (project_setup_commands.txt: git clone … $RUNTIME_DIR)." >&2; exit 1; }
 PLACEHOLDER=storybook.example.com
 SITE_CONF="$SB_ETC/site.conf"
 
@@ -55,7 +63,7 @@ if ! valid_domain "${domain:-}" || ! [[ ${cert:-} =~ ^[A-Za-z0-9._-]+$ ]]; then
   { [ -e "$SITE_CONF" ] && grep -vE '^[[:space:]]*(DOMAIN|CERT_NAME)[[:space:]]*=' "$SITE_CONF"
     printf '%s\n' "DOMAIN=$domain" "CERT_NAME=$cert"; } > "$SITE_CONF.new" || true
   [ -s "$SITE_CONF.new" ] || printf '%s\n' "# The storybook's address on this server (ops/root/install.sh). Read by the nginx configs," \
-    "# the backend (origin check; pm2 restart backend after a change) and the security scripts." "DOMAIN=$domain" "CERT_NAME=$cert" > "$SITE_CONF.new"
+    "# the backend (origin check; sudo systemctl restart storybook after a change) and the security scripts." "DOMAIN=$domain" "CERT_NAME=$cert" > "$SITE_CONF.new"
   install -o root -g root -m 644 "$SITE_CONF.new" "$SITE_CONF"; rm -f "$SITE_CONF.new"
   echo "   written: $SITE_CONF"
 fi
@@ -79,23 +87,71 @@ install -o root -g root -m 644 "$HERE/maintenance/index.html" "$SB_ETC/maintenan
 install -d -m 755 /var/cache/nginx
 nginx_apply
 
-# --- 3. the mode command ------------------------------------------------------------------------------
-install -o root -g root -m 755 "$HERE/storybook-mode" /usr/local/sbin/storybook-mode
-echo "== /usr/local/sbin/storybook-mode installed"
+# --- 3. the backend's user, its files, its service ------------------------------------------------------
+if ! getent passwd "$APP_USER" > /dev/null; then
+  useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+    --comment "Storybook backend" "$APP_USER"
+  echo "== new system user $APP_USER (no password, no shell, no home)"
+fi
+# the ntfy topic (/etc/dk-srv/notify.conf) is readable for the group dk-notify – the backend sends
+# notifications too (e.g. an account locked after many failed logins)
+group=dk-notify
+if getent group "$group" > /dev/null && ! id -nG "$APP_USER" | tr ' ' '\n' | grep -qx "$group"; then
+  usermod -aG "$group" "$APP_USER"; echo "== $APP_USER added to the group $group (the ntfy topic)"
+fi
+# the code: the deploy user's, readable for everyone (it's public) – the backend can't change it
+[ "$(stat -c %U "$RUNTIME_DIR")" = "$DEPLOY_USER" ] || echo "   WARNING: $RUNTIME_DIR should belong to $DEPLOY_USER (sudo chown -R $DEPLOY_USER: $RUNTIME_DIR)"
+[ "$(stat -c %a "$RUNTIME_DIR")" = 755 ] || chmod 755 "$RUNTIME_DIR"
+# server/.env (database password, secrets): only the backend's user
+env_file="$RUNTIME_DIR/server/.env"
+if [ -f "$env_file" ]; then
+  [ "$(stat -c '%U:%G %a' "$env_file")" = "$APP_USER:$APP_USER 600" ] || { chown "$APP_USER:$APP_USER" "$env_file"; chmod 600 "$env_file"; echo "== $env_file: only $APP_USER may read it"; }
+else
+  echo "   WARNING: $env_file is missing – the backend can't start without it (project_setup_commands.txt)"
+fi
+# the photos: the backend writes them (folders 755, files 644 – nginx reads them)
+install -d -m 755 "$UPLOADS"
+if [ -n "$(find "$UPLOADS" ! -user "$APP_USER" -print -quit)" ]; then
+  chown -R "$APP_USER:$APP_USER" "$UPLOADS"; echo "== $UPLOADS belongs to $APP_USER"
+fi
+install -d -o root -g adm -m 750 /var/log/storybook
+# the service (template filled in)
+sed -e "s#@RUNTIME_DIR@#$RUNTIME_DIR#g" "$HERE/storybook.service" > "$work/storybook.service"
+unit=/etc/systemd/system/storybook.service
+if ! cmp -s "$work/storybook.service" "$unit"; then
+  install -o root -g root -m 644 "$work/storybook.service" "$unit"
+  systemctl daemon-reload
+  systemctl try-restart storybook.service   # (only if it's running)
+  echo "== $unit installed"
+fi
+# running – unless it's stopped on purpose (maintenance mode, dk-srv's lockdown)
+if [ "$(readlink "$NGINX_ENABLED/storybook")" = "$NGINX_AVAILABLE/storybook-maintenance" ]; then
+  echo "   (maintenance mode is on: the backend stays stopped – sudo storybook-mode normal)"
+elif [ "$(server_mode)" = lockdown ]; then
+  echo "   (the server is in lockdown: the backend stays stopped – sudo dk-mode normal)"
+elif ! systemctl is-enabled --quiet storybook.service || ! systemctl is-active --quiet storybook.service; then
+  systemctl enable --now --quiet storybook.service && echo "== storybook.service started (and starts after a reboot)"
+fi
 
-# --- 4. the storybook in dk-srv's list of apps ---------------------------------------------------------
-sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_HOME@#$APP_HOME#g" -e "s#@DOMAIN@#$domain#g" "$HERE/app.conf" > "$work/app.conf"
+# --- 4. the commands ------------------------------------------------------------------------------------
+install -o root -g root -m 755 "$HERE/storybook-mode" /usr/local/sbin/storybook-mode
+install -o root -g root -m 755 "$HERE/storybook-run" /usr/local/sbin/storybook-run
+echo "== /usr/local/sbin/storybook-mode and storybook-run installed"
+
+# --- 5. the storybook in dk-srv's list of apps ---------------------------------------------------------
+sed -e "s#@DEPLOY_USER@#$DEPLOY_USER#g" -e "s#@DEPLOY_HOME@#$DEPLOY_HOME#g" -e "s#@DOMAIN@#$domain#g" "$HERE/app.conf" > "$work/app.conf"
 install -d -o root -g root -m 755 "$DK_ETC/apps.d"
 install -o root -g root -m 644 "$work/app.conf" "$DK_ETC/apps.d/storybook.conf"
 echo "== $DK_ETC/apps.d/storybook.conf written"
 
-# --- 5. log rotation ------------------------------------------------------------------------------------
+# --- 6. log rotation ------------------------------------------------------------------------------------
 install -d -o root -g root -m 755 "$DK_ETC/logrotate.d"
-sed -e "s#@APP_USER@#$APP_USER#g" -e "s#@APP_HOME@#$APP_HOME#g" "$HERE/logrotate.conf" > "$work/logrotate"
+sed -e "s#@DEPLOY_USER@#$DEPLOY_USER#g" -e "s#@DEPLOY_HOME@#$DEPLOY_HOME#g" "$HERE/logrotate.conf" > "$work/logrotate"
 install -o root -g root -m 644 "$work/logrotate" "$DK_ETC/logrotate.d/storybook"
 echo "== $DK_ETC/logrotate.d/storybook written"
 
 # (for the file integrity check: changed on purpose)
 [ -d "$DK_STATE" ] && printf '%s\n' "$SB_ETC/maintenance" "$SITE_CONF" /usr/local/sbin/storybook-mode \
-  "$DK_ETC/apps.d" "$DK_ETC/logrotate.d" >> "$DK_STATE/aide-expected"
+  /usr/local/sbin/storybook-run "$unit" /var/log/storybook "$DK_ETC/apps.d" "$DK_ETC/logrotate.d" \
+  /etc/passwd /etc/group /etc/shadow /etc/gshadow >> "$DK_STATE/aide-expected"
 echo "== the storybook's root parts are installed"

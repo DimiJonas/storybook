@@ -3,22 +3,24 @@
 #
 # Set up the server first: dk-srv's setup-commands.txt (https://github.com/DimiJonas/dk-srv),
 # steps 1–10 (own user appuser, SSH keys, firewall, automatic updates, nginx, fail2ban, Ubuntu Pro,
-# dk-srv itself). Then these steps, in this order; then dk-srv's steps 12–15 (the hardening).
+# dk-srv itself). Then these steps, in this order; step 10 leads back to dk-srv's hardening.
 #
 # Where to run each command:
 #   (server)  on the server, logged in as appuser
 #   (laptop)  on your own computer
 #
 # The app's parts and where they live on the server:
-#   ~/storybook                       the code (git repository)
-#   ~/storybook/server/.env           passwords and secrets (never in git!)
+#   /srv/storybook                    the code (git clone, owned by appuser – it pulls and builds)
+#   /srv/storybook/server/.env        passwords and secrets (never in git!) – only the backend's
+#                                     user "storybook" can read it (from step 7 on)
 #   /etc/storybook/uploads/           photos (one folder per storybook: book_1/, book_2/, ...)
 #   /etc/storybook/clientbuild/       the built app that nginx serves
 #   /etc/storybook/maintenance/       the "kurze Pause" page for maintenance mode
 #   /opt/dk-apps/storybook            root's own copy of ops/root/ (what root runs: dk-app-update)
-#   ~/backups/storybook/              nightly backups
+#   ~/backups/storybook/              nightly backups (appuser's)
 #   PostgreSQL database "storybook"   memories, users, ... (user "webapp")
-#   pm2 process "backend"             the Node server, only reachable from the server itself
+#   storybook.service                 the Node server, as the user "storybook", in a sandbox, only
+#                                     reachable from the server itself (127.0.0.1:3001)
 #   nginx                             HTTPS, serves the app and photos, passes /api to the backend
 ###################################################################################################
 
@@ -61,17 +63,18 @@ echo 'Unattended-Upgrade::Origins-Pattern { "site=deb.nodesource.com"; };' | sud
 # (server) check: the list mentions deb.nodesource.com
 sudo unattended-upgrade --dry-run --debug 2>&1 | grep -i 'allowed origins'
 
-# (server) pm2 keeps the backend running and starts it again after a reboot
-sudo npm install -g pm2
-
 
 # =================================================================================================
 # 2. Get the code
 # =================================================================================================
 
-# (server) clone the repository into ~/storybook – over https (the firewall keeps outgoing SSH
-# closed once no clone uses it)
-git clone https://github.com/DimiJonas/storybook ~/storybook
+# (server) /srv/storybook belongs to you (appuser): you pull, install and build there; the backend
+# only reads it. Not in your home folder: home folders are 750 (CIS) – the backend's user couldn't
+# read it there.
+sudo install -d -o appuser -g appuser -m 755 /srv/storybook
+
+# (server) clone the repository – over https (the firewall keeps outgoing SSH closed)
+git clone https://github.com/DimiJonas/storybook /srv/storybook
 
 
 # =================================================================================================
@@ -96,8 +99,9 @@ sudo -u postgres createdb -O webapp storybook
 # 4. Backend settings (server/.env)
 # =================================================================================================
 
-# (server) create an empty .env that only appuser can read (600)
-cd ~/storybook/server
+# (server) create an empty .env that only you can read (600) – step 7 hands it to the backend's
+# own user "storybook"
+cd /srv/storybook/server
 install -m 600 /dev/null .env
 
 # (server) create a random secret for signing logins – copy the printed line
@@ -113,11 +117,8 @@ node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 #   JWT_SECRET=<the secret printed above>
 nano .env
 
-# (server) check: 600
-stat -c '%a' .env
-
 # (server) the storybook's address: kept only on the server, in /etc/storybook/site.conf (the
-# backend, the nginx configs and storybook-mode read it there) – use your domain. Step 9 adds the
+# backend, the nginx configs and storybook-mode read it there) – use your domain. Step 7 adds the
 # certificate's folder to it.
 sudo install -d -m 755 /etc/storybook
 echo "DOMAIN=storybook.example.com" | sudo tee /etc/storybook/site.conf
@@ -125,10 +126,12 @@ echo "DOMAIN=storybook.example.com" | sudo tee /etc/storybook/site.conf
 
 # =================================================================================================
 # 5. Install the backend and create the tables
+#    (.env is still yours, so the scripts run as you with npm run; from step 7 on they run as the
+#    backend's user: sudo storybook-run <name> …)
 # =================================================================================================
 
 # (server) install the backend's libraries exactly as in package-lock.json
-cd ~/storybook/server
+cd /srv/storybook/server
 npm ci
 
 # (server) create all tables; this also creates the first storybook (book_1)
@@ -140,8 +143,9 @@ npm run user:password -- anna
 npm run user:password -- ben
 
 # --- OR move an existing storybook here: restore the newest backup instead (copy the dump from
-# the old server or from ~/storybook-backups/db/ on the laptop to ~/ first). Users and all
-# storybooks come with it. Use a new, empty database: drop the one from step 3 and create it again.
+# the old server or from ~/storybook-backups/db/ on the laptop to ~/ first – decrypted with
+# ops/decrypt-backup.sh). Users and all storybooks come with it. Use a new, empty database: drop
+# the one from step 3 and create it again. (The photos follow in step 8.)
 sudo -u postgres dropdb storybook
 sudo -u postgres createdb -O webapp storybook
 pg_restore -U webapp -h localhost -d storybook --no-owner --no-privileges ~/storybook-YYYY-MM-DD.dump
@@ -149,58 +153,18 @@ npm run migrate     # brings the restored database up to the code's current stru
 
 
 # =================================================================================================
-# 6. Photo folder
-# =================================================================================================
-
-# (server) the backend (appuser) writes photos there, nginx only reads them
-sudo mkdir -p /etc/storybook/uploads
-sudo chown appuser:appuser /etc/storybook/uploads
-sudo chmod 755 /etc/storybook/uploads
-
-# (server) only when moving an existing storybook (step 5, "OR"): copy the photos (from the
-# backup copy, e.g. uploaded to ~/uploads/ first) and recreate the small versions
-rsync -a ~/uploads/ /etc/storybook/uploads/
-cd ~/storybook/server && node scripts/create-thumbnails.js
-
-# (server) check: drwxr-xr-x appuser:appuser
-stat -c '%A %U:%G %n' /etc/storybook/uploads
-
-
-# =================================================================================================
-# 7. Start the backend with pm2 (also after every reboot)
-# =================================================================================================
-
-# (server) start it under the name "backend"
-cd ~/storybook/server
-pm2 start src/index.js --name backend
-
-# (server) check: answers 401 (= running, asks for a login)
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/api/books
-
-# (server) start pm2 automatically when the server boots: this prints a command starting with
-# "sudo env PATH=..." – copy and run that printed command
-pm2 startup
-
-# (server) remember the running processes, so pm2 starts them again after a reboot
-pm2 save
-
-# (pm2's log files are rotated by the storybook's log rotation, set up in step 9 through dk-srv –
-# pm2-logrotate isn't needed)
-
-
-# =================================================================================================
-# 8. Build the app
+# 6. Build the app
 # =================================================================================================
 
 # (server) build the app and copy it to /etc/storybook/clientbuild (nginx serves it from there)
 sudo mkdir -p /etc/storybook/clientbuild
-cd ~/storybook/client
+cd /srv/storybook/client
 npm ci
 ./update_nginx.sh
 
 
 # =================================================================================================
-# 9. HTTPS certificate, nginx, and what root runs for the storybook (ops/root/, through dk-srv)
+# 7. HTTPS certificate, nginx, the backend's user and service (ops/root/, through dk-srv)
 # =================================================================================================
 
 # (server) a small temporary config, only so that certbot can get the certificate
@@ -220,12 +184,26 @@ sudo certbot certificates
 nginx -V 2>&1 | grep -o http_auth_request_module
 
 # (server) the storybook's root parts: dk-srv keeps a root-owned copy of just ops/root/
-# (/opt/dk-apps/storybook) and runs ops/root/install.sh from there. It asks once for <FOLDER>
-# from above (stored in /etc/storybook/site.conf as CERT_NAME), fills in the nginx templates
-# (normal and maintenance), installs them with the "kurze Pause" page and storybook-mode, checks
-# nginx and reloads it, and registers the storybook with dk-srv (/etc/dk-srv/apps.d/storybook.conf:
-# nightly npm audit, weekly report, file integrity check, log rotation, its databases)
+# (/opt/dk-apps/storybook) and runs ops/root/install.sh from there. It
+#   - asks once for <FOLDER> from above (stored in /etc/storybook/site.conf as CERT_NAME), fills in
+#     the nginx templates (normal and maintenance), installs them with the "kurze Pause" page,
+#     checks nginx and reloads it
+#   - creates the backend's own user "storybook" (no password, no shell, no sudo), hands it
+#     server/.env (600) and the photo folder /etc/storybook/uploads, and starts the backend as
+#     storybook.service (in a sandbox; it starts again after every reboot)
+#   - installs storybook-mode and storybook-run, and registers the storybook with dk-srv
+#     (/etc/dk-srv/apps.d/storybook.conf: nightly npm audit, weekly report, file integrity check,
+#     log rotation, its databases)
 sudo dk-app-update storybook https://github.com/DimiJonas/storybook
+
+# (server) check: running, as "storybook"; answers 401 (= running, asks for a login)
+systemctl status storybook --no-pager | head -5
+systemctl show -p User --value storybook
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3001/api/books
+
+# (server) check: .env belongs to storybook (600 storybook:storybook); its sandbox is "OK" (≈1.4)
+sudo stat -c '%a %U:%G' /srv/storybook/server/.env
+systemd-analyze security storybook | tail -1
 
 # (server) check: the security headers are there (strict-transport-security, content-security-policy, ...)
 curl -sI https://$(. /etc/storybook/site.conf; echo $DOMAIN) | grep -iE 'strict|content-security|x-frame|server'
@@ -239,7 +217,20 @@ systemctl list-timers | grep -i certbot
 
 
 # =================================================================================================
-# 10. Nightly backups
+# 8. Photos – only when moving an existing storybook (step 5, "OR")
+# =================================================================================================
+
+# (server) copy the photos (from the decrypted backup copy, e.g. uploaded to ~/uploads/ first) –
+# they belong to the backend's user – and recreate the small versions
+sudo rsync -a --chown=storybook:storybook ~/uploads/ /etc/storybook/uploads/
+sudo storybook-run photos:thumbnails
+
+# (server) check: drwxr-xr-x storybook:storybook
+stat -c '%A %U:%G %n' /etc/storybook/uploads
+
+
+# =================================================================================================
+# 9. Nightly backups (they run as you, appuser – not as the backend's user)
 # =================================================================================================
 
 # (server) let the backup read the database password (the one of webapp from step 3) without
@@ -260,11 +251,11 @@ echo "AGE_RECIPIENT=age1..." | sudo tee /etc/storybook/backup.conf
 sudo chmod 644 /etc/storybook/backup.conf
 
 # (server) run it once by hand: ends with "backup done (encrypted)" (the restore test needs its
-# database, which dk-srv's hardening creates – part "postgres", step 11)
-~/storybook/ops/backup.sh
+# database, which dk-srv's hardening creates – part "postgres", step 10)
+/srv/storybook/ops/backup.sh
 
 # (server) run it every night at 03:15: `crontab -e` and add this line at the end
-#   15 3 * * * /home/appuser/storybook/ops/backup.sh >> /home/appuser/backups/storybook/backup.log 2>&1
+#   15 3 * * * /srv/storybook/ops/backup.sh >> /home/appuser/backups/storybook/backup.log 2>&1
 crontab -e
 
 # (laptop) a key that may ONLY read the backups (no shell), and an SSH alias for it – then the
@@ -281,23 +272,20 @@ echo 'restrict,command="/usr/bin/rrsync -ro /home/appuser/backups/storybook" PAS
 
 
 # =================================================================================================
-# 11. The server's hardening and checks for the storybook (dk-srv)
+# 10. The server's hardening and checks for the storybook (dk-srv)
 # =================================================================================================
-
-# (server) the backend sends its own notifications (topic from dk-srv's /etc/dk-srv/notify.conf)
-pm2 restart backend
 
 # (server) dk-srv's hardening now knows the storybook (its databases, its places): dk-srv's
 # setup-commands.txt, steps 12–15. Its part "postgres" creates storybook_restoretest; afterwards
 # the restore test once (ends with "Restore test passed"):
-FORCE_RESTORE_TEST=1 ~/storybook/ops/backup.sh
+FORCE_RESTORE_TEST=1 /srv/storybook/ops/backup.sh
 
 # (server) the nightly security check once: npm audit of server/ and client/ is in it
 sudo dk-security-check
 
 
 # =================================================================================================
-# 12. Final checks
+# 11. Final checks
 # =================================================================================================
 
 # (server) from outside only 22, 80, 443 are reachable; 5432 (postgres) and 3001 (backend)

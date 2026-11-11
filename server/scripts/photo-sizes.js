@@ -2,6 +2,7 @@
 // step 9; new uploads get them right away). The photo view needs them to lay out its rows.
 //
 //   npm run photos:sizes
+//   (on the server, as the backend's user: sudo storybook-run photos:sizes … – the same, without the "--")
 //
 // Run from the server folder, on the server (where the photos are) and – if you keep photos
 // there too – on your computer. Safe to run again: only photos without a size are looked at.

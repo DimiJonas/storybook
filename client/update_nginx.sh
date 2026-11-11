@@ -1,6 +1,6 @@
 #!/bin/sh
 
-APP_DIR="/home/appuser/storybook/client"
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"   # the client folder (this script's), e.g. /srv/storybook/client
 BUILD_DIR="$APP_DIR/build"
 DEPLOY_DIR="/etc/storybook/clientbuild"
 
@@ -21,8 +21,6 @@ sudo find "$DEPLOY_DIR" -type d -exec chmod 755 {} +
 sudo find "$DEPLOY_DIR" -type f -exec chmod 644 {} +
 
 # the file integrity check (AIDE, dk-srv) shouldn't report this deploy
-if [ -x /usr/local/sbin/dk-aide-check ]; then sudo dk-aide-check expect "$DEPLOY_DIR" > /dev/null
-elif [ -d /var/lib/storybook ]; then echo "$DEPLOY_DIR" | sudo tee -a /var/lib/storybook/aide-expected > /dev/null   # (before dk-srv)
-fi
+if [ -x /usr/local/sbin/dk-aide-check ]; then sudo dk-aide-check expect "$DEPLOY_DIR" > /dev/null; fi
 
 echo "Deployment complete! The client is now updated."

@@ -20,7 +20,7 @@
 | –   | ✅ Public repository (server settings out of the code, README, screenshots)    | S    | –             |
 | 15  | ✅ Hardening by the guides (CIS Ubuntu/NGINX/PostgreSQL, OWASP ASVS)          | M–L  | 13, 14        |
 | 16  | ✅ Three repositories: the server's scripts to dk-srv, the home page to dk-home | M    | 15            |
-| –   | Later: the backend as its own user (dk-srv's step 2)                          | M    | 16            |
+| 17  | ✅ The backend as its own user, in a sandbox                                   | M    | 16            |
 | –   | Later: 2FA for the app login (codes from an authenticator app)                | M    | 14            |
 | –   | Later: printable storybook, see "Future ideas"                                | L    | 12            |
 
@@ -856,17 +856,51 @@ repository). Split into three, all under github.com/DimiJonas:
 - private repositories over https with a **fine-grained, read-only token** (root-only file on the
   server; its expiry date in the weekly report); once the storybook and dk-srv are public, only
   dk-home needs it
-- the backend and the backup read the ntfy topic from dk-srv's `/etc/dk-srv/notify.conf` (the old
-  `/etc/storybook/notify.conf` still works until it's moved); `client/update_nginx.sh` tells
-  `dk-aide-check` about a deploy
-- the backend as its own user (instead of `appuser`, which also has sudo): after the split, as
-  dk-srv's step 2
+- the backend and the backup read the ntfy topic from dk-srv's `/etc/dk-srv/notify.conf`;
+  `client/update_nginx.sh` tells `dk-aide-check` about a deploy
 
-**Moving the server**: once, with dk-srv's `migrate/from-storybook.sh` (dk-srv's
-`setup-commands.txt`, "Moving from the storybook's scripts") – settings, memory and logs to dk-srv's
-places, the hardening's files renamed; nothing about the settings themselves changes. Measured
-afterwards (2026-11-05): all rules **92.7 %** (344 pass, 13 fail – exactly the 13 accepted risks),
-without the accepted risks **100 %**.
+Measured after the move (2026-11-05): all rules **92.7 %** (344 pass, 13 fail – exactly the 13
+accepted risks), without the accepted risks **100 %** – nothing about the settings changed.
+
+---
+
+## 17. The backend as its own user, in a sandbox ✅
+
+Until now the backend ran as `appuser` – the account that logs in by SSH and has sudo. A hole in
+the backend or one of its libraries would have given an attacker that account. Now it gets only
+`storybook`, a user of its own (together with dk-srv's step 2).
+
+**Decided:**
+
+- **`storybook`**: a system user without password, shell or home folder, not in `sudo`; created by
+  `ops/root/install.sh`
+- **the code moves to `/srv/storybook`**, a git clone owned by appuser (it pulls, installs, builds;
+  the backend only reads it). Not in appuser's home: home folders are `750` (CIS), and the service
+  hides `/home` anyway
+- **`server/.env`** belongs to `storybook` (`600`); the **photos** too (it writes them)
+- **a systemd service instead of pm2** (`ops/root/storybook.service`): starts at boot, restarts
+  after a crash – and a sandbox: read-only file system except the photos, no `/home`, own `/tmp`
+  and `/dev`, no new privileges or capabilities, kernel, clock and other processes off limits, only
+  the network kinds and system calls a normal service uses. `systemd-analyze security`: **1.4 "OK"**
+  (the same backend without it: 9.0 "UNSAFE"). Left open on purpose: the network, writable and
+  executable memory (Node.js compiles at run time), `ProcSubset` (sharp reads `/proc/cpuinfo`)
+- logs: `/var/log/storybook/backend.log` and `backend-error.log` (systemd writes them; rotated
+  daily, 14 days – as before); pm2 is gone
+- **the admin scripts** run as the backend's user: `sudo storybook-run <name> …` (the names of
+  `server/package.json`'s scripts – only `node scripts/….js` ones); new: `photos:thumbnails`
+  (`create-thumbnails.js`). The one-time `photos:move-to-storybook` (step 4) is removed
+- the ntfy topic: readable for the group **`dk-notify`** (appuser and `storybook`) instead of the
+  group appuser
+- `storybook-mode`: `systemctl disable --now` / `enable --now` instead of `pm2 stop`/`start` +
+  `save` (remembered for reboots the same way)
+- the backups stay with appuser (cron, `~/.pgpass`, the read-only pull key) – they now run from
+  `/srv/storybook/ops/backup.sh`
+- dk-srv: an app has `SERVICE=` (instead of `PM2_PROCESS=`) and `DEPLOY_USER=` (the code's owner,
+  npm audit runs as it); the nightly check reports if the service ever runs as another user, if
+  its user can log in or is an admin, or if the sandbox is off
+
+**Later (not in this step):** the database login without a password (PostgreSQL "peer" login
+through the system user); an address filter for the service's network.
 
 ---
 

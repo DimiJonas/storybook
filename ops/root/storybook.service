@@ -1,0 +1,73 @@
+# The storybook's backend as a systemd service – TEMPLATE. ops/root/install.sh fills in
+# @RUNTIME_DIR@ (/srv/storybook) and installs it as /etc/systemd/system/storybook.service.
+#
+# It runs as its own user "storybook" (no password, no shell, no sudo – ops/README.md, "The backend's
+# user") and in a sandbox: if someone found a hole in the backend or one of its libraries, they
+# would get only what this file allows. Check it with: systemd-analyze security storybook
+#
+#   sudo systemctl status storybook          is it running? (storybook-mode status shows it too)
+#   sudo systemctl restart storybook         after a deploy
+#   /var/log/storybook/backend.log           what it prints (rotated, 14 days)
+#
+# Stopping and starting for maintenance: sudo storybook-mode … (it remembers the mode for reboots).
+
+[Unit]
+Description=Storybook backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=storybook
+Group=storybook
+# (its other groups come from /etc/group: dk-notify, to read the ntfy topic)
+WorkingDirectory=@RUNTIME_DIR@/server
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=3
+# new photos readable for nginx (the backend sets this itself too)
+UMask=0022
+StandardOutput=append:/var/log/storybook/backend.log
+StandardError=append:/var/log/storybook/backend-error.log
+
+# --- the sandbox -------------------------------------------------------------------------------
+# The whole file system is read-only for it – the code, /etc, everything – except the photos.
+ProtectSystem=strict
+ReadWritePaths=/etc/storybook/uploads
+# /home, /root and /run/user don't exist for it (the code is in /srv for that reason)
+ProtectHome=yes
+# its own empty /tmp and /dev (no disks, no terminals)
+PrivateTmp=yes
+PrivateDevices=yes
+# no way to more rights: no setuid programs, no capabilities, no new namespaces
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+# hands off the kernel and the system's settings
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# other processes are invisible to it
+ProtectProc=invisible
+RemoveIPC=yes
+KeyringMode=private
+# only the network kinds it needs: IPv4/IPv6 (database on 127.0.0.1, map search, notifications)
+# and local sockets
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# only the system calls a normal service uses; anything else fails with "not permitted"
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+# (not set, on purpose: MemoryDenyWriteExecute – Node.js compiles JavaScript to machine code at run
+# time and needs it; ProcSubset=pid – the photo library asks /proc/cpuinfo for the CPU count;
+# ~@resources – Node.js raises its own open-files limit at start)
+
+[Install]
+WantedBy=multi-user.target

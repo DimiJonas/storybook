@@ -12,24 +12,28 @@ Requires Node.js 22.12 or newer (`node -v`; the server uses 24) and PostgreSQL 1
 | ---------------------------------------- | ------------------------------------------------------------------- |
 | `npm ci`                                 | Install the libraries exactly as in `package-lock.json`              |
 | `npm run dev`                            | Start on http://localhost:3001, restarts when a file changes        |
-| `npm start`                              | Start without watching (pm2 runs `src/index.js` on the server)      |
+| `npm start`                              | Start without watching (on the server, `storybook.service` runs `src/index.js`) |
 | `npm run migrate`                        | Apply new database migrations (`-- --list`: only show them)         |
 | `npm run db:schema`                      | Update `../schema.sql` (on the laptop only, then commit it)         |
 | `npm run storybook:create -- "Name"`     | Create a new, empty storybook                                       |
 | `npm run user:password -- <name>`        | Create a login or set a new password (`--lock`, `-- --list`); ends that user's running logins |
 | `npm run sessions`                       | The running logins (who, device, since, last used); `-- --end <name>` / `-- --end-all` ends them |
-| `node scripts/create-thumbnails.js`      | Create missing small photo versions (e.g. after a restore)          |
+| `npm run photos:thumbnails`              | Create missing small photo versions (e.g. after a restore)          |
 | `node scripts/make-app-icons.js`         | Create the app icons from `client/app-icon.png`                     |
-| `npm run photos:move-to-storybook`       | One-time move of photos into `book_1/` (from step 4, done)          |
 | `npm run photos:sizes`                   | Fill in width/height of photos that don't have them (once after step 9) |
 | `npm run photos:places -- --dry-run`     | Photo towns: which town each not yet looked-at photo is in (changes nothing); without `--dry-run`: town as place, GPS removed from the file, memories get their photos' towns (once after step 11) |
+
+On the server, the scripts run as the backend's own user, with the same names and arguments
+(without the `--`): `sudo storybook-run sessions --end anna`, `sudo storybook-run migrate` – see
+`ops/README.md`, "The backend's user". `db:schema` and `make-app-icons.js` are for the laptop only.
 
 For development, the client runs separately (`cd ../client && npm run dev`, port 3000).
 
 ## Settings: `.env`
 
-`server/.env` holds the settings and secrets. It's never in git, patches or chat; only appuser
-may read it (`chmod 600`). Keys (values differ per computer):
+`server/.env` holds the settings and secrets. It's never in git, patches or chat. On the server it
+belongs to the backend's user `storybook` (`600` – set by `ops/root/install.sh`); on the laptop
+`chmod 600`. Keys (values differ per computer):
 
 | Key           | Meaning                                                                       |
 | ------------- | ----------------------------------------------------------------------------- |
@@ -42,7 +46,7 @@ may read it (`chmod 600`). Keys (values differ per computer):
 | `JWT_SECRET`  | random secret, at least 32 characters (the server refuses to start without); since step 14 only for login tokens from before the switch to cookies |
 | `NOMINATIM_URL` | optional: another place search service than `https://nominatim.openstreetmap.org` (the tests use a fake one) |
 | `SESSION_CACHE_MS` | optional: how long checked logins are remembered (ms, default 30000; the tests use less) |
-| `NOTIFY_CONF` | optional: another file with the ntfy topic than `/etc/storybook/notify.conf` (the tests use one) |
+| `NOTIFY_CONF` | optional: another file with the ntfy topic than `/etc/dk-srv/notify.conf` (the tests use one) |
 | `APP_URL` | optional: the app's address, e.g. `https://storybook.example.com` (origin check, CORS, the place search's User-Agent). Without it: on the server `https://<DOMAIN>` from `/etc/storybook/site.conf` (written by `ops/root/install.sh`, run by dk-srv's `dk-app-update` – the server refuses to start without either), on the laptop `http://localhost:3000` |
 | `SITE_CONF` | optional: another file than `/etc/storybook/site.conf` (tests) |
 
@@ -177,7 +181,8 @@ for the API until they run out – no new ones are made.
   Uploading a photo: its GPS position becomes its town (Nominatim), then the position is removed
   from the file (exiftool – `sudo apt install libimage-exiftool-perl`); a memory without places
   chosen by hand (`memory_places.from_photos`) gets the towns of its photos. If the place search
-  can't be reached, the photo keeps its position until `npm run photos:places` runs. No exact
+  can't be reached, the photo keeps its position until `photos:places` runs (on the server:
+`sudo storybook-run photos:places`). No exact
   photo position is ever saved
 - **map pictures** don't go through Node: nginx fetches them from OpenStreetMap and keeps them
   (`/tiles/` in `ops/root/nginx/storybook.conf`); in development there's a small `/tiles/` route instead
@@ -191,7 +196,7 @@ Never change a migration that was already applied somewhere – add a new number
 - something shared (users, ...) → `migrations/NNN_name.sql`
 
 Then `npm run migrate && npm run db:schema` on the laptop, commit the migration together with
-`../schema.sql`; on the server `npm run migrate` during the deploy.
+`../schema.sql`; on the server `sudo storybook-run migrate` during the deploy.
 
 ## Rules to keep
 
@@ -201,4 +206,4 @@ Then `npm run migrate && npm run db:schema` on the laptop, commit the migration 
 - dates stay text (`"2025-10-22"`), never `new Date(...)` on the server
 - uploads: only photo types (name *and* content are checked), random file names
 - users are never deleted (the database refuses it while they have memories) – lock them instead
-- error answers don't contain details (stack traces stay in the log: `pm2 logs backend`)
+- error answers don't contain details (stack traces stay in the log: `/var/log/storybook/backend-error.log`)

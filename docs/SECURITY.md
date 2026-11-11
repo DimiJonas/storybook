@@ -48,9 +48,9 @@ topic, no keys); anything unusual sends a notification to the phone.
 | Self-contained Tokens, OAuth/OIDC, WebRTC | Not used | ➖ |
 | Cryptography | Only standard libraries (Node `crypto`, bcrypt, SCRAM, TLS); no own crypto | ✅ |
 | Secure Communication | HTTPS only (HSTS), TLS 1.2/1.3; the backend only on `127.0.0.1` | ✅ |
-| Configuration | Secrets only in `server/.env` (`600`) and on the server (`/etc/storybook/`, `/etc/dk-srv/`), never in the repository; dependencies checked nightly (`npm audit`), Dependabot on GitHub | ✅ |
+| Configuration | Secrets only in `server/.env` (`600`, readable only by the backend's own user) and on the server (`/etc/storybook/`, `/etc/dk-srv/`), never in the repository; dependencies checked nightly (`npm audit`), Dependabot on GitHub | ✅ |
 | Data Protection | Photos without GPS, private caching, encrypted backups, map tiles through this server (OpenStreetMap doesn't see who looks where) | ✅ |
-| Secure Coding and Architecture | Small, documented code; every change described in the roadmap | ✅ |
+| Secure Coding and Architecture | Small, documented code; every change described in the roadmap; the backend runs as **its own user, in a sandbox** (section 2) | ✅ |
 | Security Logging and Error Handling | Failed/blocked logins and refused requests logged with IP; no stack traces in answers; the backend refuses to start with missing secrets or address | ✅ |
 
 ### OWASP Top 10 (2025) at a glance
@@ -62,13 +62,28 @@ topic, no keys); anything unusual sends a notification to the phone.
 | A03 Software Supply Chain Failures | Lockfiles, `npm ci`, nightly `npm audit` (critical → maintenance mode), Dependabot, Ubuntu Pro updates |
 | A04 Cryptographic Failures | TLS 1.2/1.3 AEAD only, HSTS, bcrypt, SCRAM, hashed session keys, encrypted backups |
 | A05 Injection | Parameterised SQL, React output escaping, strict CSP |
-| A06 Insecure Design | Threat model above; least privilege in every layer; restricted backup key |
+| A06 Insecure Design | Threat model above; least privilege in every layer (the backend's own user and sandbox); restricted backup key |
 | A07 Authentication Failures | Wait times, lockout notification, rate limits, fail2ban, strong session cookies – 2FA planned (A8) |
 | A08 Software or Data Integrity Failures | AIDE, auditd (dk-srv); root runs only a root-owned copy of `ops/root/`; monthly restore test |
 | A09 Logging & Alerting Failures | Phone notifications for logins, bans, lockouts, integrity changes, failed backups, security findings; weekly report |
 | A10 Mishandling of Exceptional Conditions | Generic error answers; refuses to start without proper configuration; failed checks notify |
 
-## 2. Its nginx site (CIS NGINX Benchmark)
+## 2. The backend's user and sandbox
+
+If someone found a hole in the backend or one of its libraries, they would get what the backend's
+process may do – so it may do little ([`ops/README.md`](../ops/README.md), "The backend's user"):
+
+| What | |
+|---|---|
+| Runs as `storybook`, a system user of its own: no password, no shell, no home folder, not in `sudo` – not as the admin user, who logs in and has sudo | ✅ |
+| Can't change its own code: `/srv/storybook` belongs to the admin user; root runs nothing from it (`ops/root/` comes from a root-owned copy) | ✅ |
+| Only it reads `server/.env`; it writes only the photo folder | ✅ |
+| systemd sandbox ([`ops/root/storybook.service`](../ops/root/storybook.service)): file system read-only except the photos, no `/home`, own `/tmp` and `/dev`, no new privileges or capabilities, kernel/clock/other processes off limits, only the needed network kinds and system calls | ✅ |
+| Measured: `systemd-analyze security storybook` **1.4 "OK"** (0 = locked down, 10 = unprotected) – the same backend without the sandbox: 9.0 "UNSAFE" | ✅ |
+| Checked every night (dk-srv): runs as its own user, that user can't log in and isn't an admin, the sandbox is on | ✅ |
+| Network: it may still reach anything (database, map search, notifications) – a per-service address filter would need the map search's changing addresses | ⚠️ accepted |
+
+## 3. Its nginx site (CIS NGINX Benchmark)
 
 [`ops/root/nginx/storybook.conf`](../ops/root/nginx/storybook.conf) and the maintenance config,
 installed by `ops/root/install.sh` through dk-srv's `dk-app-update` (checked with `nginx -t`, put
@@ -85,7 +100,7 @@ limits, TLS 1.2/1.3 with AEAD ciphers, HSTS) is dk-srv's.
 | Photos | Served only after the backend confirmed the login (`auth_request`); only image types; `Cache-Control: private` | ✅ |
 | Maintenance mode | Every address (app, API, photos) answers 503 with a static page; the backend is stopped | ✅ |
 
-## 3. Backups
+## 4. Backups
 
 | What | |
 |---|---|
@@ -94,7 +109,7 @@ limits, TLS 1.2/1.3 with AEAD ciphers, HSTS) is dk-srv's.
 | Fetched to a second machine with a **key that can only read the backups** (`rrsync -ro`), with its own notification | ✅ |
 | **Monthly restore test**: the dump is restored into a separate database, every table's row count compared with the live one, every photo checked for its copy; result as a notification | ✅ |
 
-## 4. Notifications (from the storybook)
+## 5. Notifications (from the storybook)
 
 An app account with 20 failed logins in a row (someone guessing a password) · a failed backup ·
 the monthly restore test · maintenance mode on/off. The server's own (SSH logins, bans, security
@@ -112,7 +127,6 @@ The storybook's own:
 | | Risk | Why it's accepted |
 |---|---|---|
 | A8 | No second factor for the app login | Planned as its own step (codes from an authenticator app). Until then: long passwords, wait times, notifications on lockouts |
-| – | The backend runs as the admin user (`appuser`) | Planned (dk-srv's roadmap): its own user without login or sudo. Until then: the backend only listens on `127.0.0.1`, root runs nothing from its folder, and every SSH login and sudo command is recorded |
 
 ## Reporting a problem
 

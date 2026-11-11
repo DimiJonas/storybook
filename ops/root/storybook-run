@@ -1,0 +1,40 @@
+#!/bin/bash
+# Runs one of the backend's admin scripts on the server – as the backend's own user "storybook",
+# because only it can read server/.env (database password) and write the photos:
+#
+#   sudo storybook-run sessions                     the running logins
+#   sudo storybook-run sessions --end anna          end anna's logins
+#   sudo storybook-run user:password anna           set a new password (asks for it hidden)
+#   sudo storybook-run migrate                      apply new database migrations (after a deploy)
+#   sudo storybook-run                              lists the scripts
+#
+# The names are the ones in server/package.json ("scripts"); only those that run
+# "node scripts/….js" are allowed – nothing else, no shell. On your laptop, the same scripts
+# are simply: npm run <name>. Installed from ops/root/ by `sudo dk-app-update storybook` as
+# /usr/local/sbin/storybook-run (owned by root).
+set -euo pipefail
+. "${DK_LIB:-/usr/local/lib/dk-srv}/security-lib.sh"
+APP=storybook
+user=$(app_get "$APP" APP_USER) dir=$(app_get "$APP" RUNTIME_DIR)
+[ -n "$user" ] && [ -d "$dir/server" ] || { echo "The storybook isn't installed (/etc/dk-srv/apps.d/$APP.conf)." >&2; exit 1; }
+need_root "$@"
+cd "$dir/server"
+
+# name -> "node scripts/x.js …" from package.json – read as plain data (root runs nothing of the app)
+scripts=$(python3 -I -c '
+import json, re, sys
+for name, cmd in (json.load(open(sys.argv[1])).get("scripts") or {}).items():
+    m = re.fullmatch(r"node (scripts/[A-Za-z0-9_-]+\.js)((?: [A-Za-z0-9=_-]+)*)", cmd)
+    if m: print(name + "\t" + m.group(1) + m.group(2))' package.json)
+
+if [ $# -eq 0 ]; then
+  echo "Usage: sudo storybook-run <name> [arguments] – the backend's admin scripts:"
+  printf '%s\n' "$scripts" | cut -f1 | sed 's/^/   /'
+  exit 2
+fi
+name=$1; shift
+cmd=$(printf '%s\n' "$scripts" | awk -F'\t' -v n="$name" '$1 == n { print $2 }')
+[ -n "$cmd" ] || { echo "No such script: $name (sudo storybook-run lists them)" >&2; exit 2; }
+# shellcheck disable=SC2086   # (the command from package.json: a script and fixed words)
+exec runuser -u "$user" -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
+  ${TERM:+TERM=$TERM} node $cmd "$@"

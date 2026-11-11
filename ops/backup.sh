@@ -40,8 +40,6 @@ KEEP_DAYS="${KEEP_DAYS:-7}"
 KEEP_MONTHS="${KEEP_MONTHS:-12}"
 TODAY="${TODAY:-$(date +%F)}"   # can be overridden for testing
 NOTIFY="${NOTIFY_BIN:-/usr/local/sbin/dk-notify}"
-# (until the server is moved to dk-srv: the old name)
-[ -x "$NOTIFY" ] || [ -n "${NOTIFY_BIN:-}" ] || NOTIFY=/usr/local/sbin/storybook-notify
 
 log() { echo "$(date '+%F %T') $*"; }
 notify() { [ -x "$NOTIFY" ] && "$NOTIFY" "$@" || true; }
@@ -62,7 +60,7 @@ trap finish EXIT
 
 # the public key to encrypt to (env or /etc/storybook/backup.conf)
 if [ -z "${AGE_RECIPIENT:-}" ] && [ -e "$BACKUP_CONF" ]; then
-  [ -r "$BACKUP_CONF" ] || fail "Can't read $BACKUP_CONF, so the backup can't be encrypted – not made. Fix: sudo chmod 644 $BACKUP_CONF (it holds only the public key), then run ~/storybook/ops/backup.sh."
+  [ -r "$BACKUP_CONF" ] || fail "Can't read $BACKUP_CONF, so the backup can't be encrypted – not made. Fix: sudo chmod 644 $BACKUP_CONF (it holds only the public key), then run /srv/storybook/ops/backup.sh."
   AGE_RECIPIENT=$(sed -nE 's/^[[:space:]]*AGE_RECIPIENT[[:space:]]*=[[:space:]]*(age1[0-9a-z]+).*/\1/p' "$BACKUP_CONF" | tail -1)
   [ -n "$AGE_RECIPIENT" ] || fail "$BACKUP_CONF has no AGE_RECIPIENT=age1… line – backup not made (it would be unencrypted)."
 fi
