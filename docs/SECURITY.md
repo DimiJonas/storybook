@@ -79,7 +79,7 @@ process may do – so it may do little ([`ops/README.md`](../ops/README.md), "Th
 | Can't change its own code: `/srv/storybook` belongs to the admin user; root runs nothing from it (`ops/root/` comes from a root-owned copy) | ✅ |
 | Only it reads `server/.env`; it writes only the photo folder | ✅ |
 | systemd sandbox ([`ops/root/storybook.service`](../ops/root/storybook.service)): file system read-only except the photos, no `/home`, own `/tmp` and `/dev`, no new privileges or capabilities, kernel/clock/other processes off limits, only the needed network kinds and system calls | ✅ |
-| Measured: `systemd-analyze security storybook` **1.4 "OK"** (0 = locked down, 10 = unprotected) – the same backend without the sandbox: 9.0 "UNSAFE" | ✅ |
+| Measured: `systemd-analyze security storybook` **1.4 "OK"** (0 = locked down, 10 = unprotected; on the server, 2026-11-11) – the same backend without the sandbox: 9.0 "UNSAFE" | ✅ |
 | Checked every night (dk-srv): runs as its own user, that user can't log in and isn't an admin, the sandbox is on | ✅ |
 | Network: it may still reach anything (database, map search, notifications) – a per-service address filter would need the map search's changing addresses | ⚠️ accepted |
 

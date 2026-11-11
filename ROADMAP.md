@@ -883,6 +883,14 @@ the backend or one of its libraries would have given an attacker that account. N
   deploy: appuser's umask 027 made the new clone `750`/`640`, and systemd couldn't even enter the
   folder – the first start failed with `200/CHDIR`.) Its log files are `640` (`UMask=0027`; the
   backend sets 022 for the photos itself)
+- a start limit: at most 5 starts a minute, then it stays failed. (Also found at the deploy: while
+  it couldn't start, systemd retried every 3 seconds without end – the default limit, 5 in
+  10 seconds, is never reached with 3 seconds between the tries.)
+
+Measured on the server (2026-11-11): the sandbox **1.4 "OK"**; the service runs as `storybook`
+(no sudo, groups `storybook` and `dk-notify`), `.env` `600 storybook`, the code `2750
+appuser:storybook`; outgoing SSH closed. CIS audit the same day, before the log-file fix: all
+rules 92.4 %, tailored 99.6 % – the one failure was the backend's log files (`644`), fixed since.
 - **a systemd service instead of pm2** (`ops/root/storybook.service`): starts at boot, restarts
   after a crash – and a sandbox: read-only file system except the photos, no `/home`, own `/tmp`
   and `/dev`, no new privileges or capabilities, kernel, clock and other processes off limits, only

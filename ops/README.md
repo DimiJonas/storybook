@@ -472,6 +472,10 @@ sudo storybook-run sessions --end anna    # the same arguments as npm run …, w
 ```
 They run outside the service's sandbox (as `storybook`, without sudo rights).
 
+If the backend crashes, systemd starts it again after 3 seconds – but at most 5 times a minute;
+then it stays **failed** (`sudo storybook-mode status` shows it, with the commands to see why) and
+nobody's CPU is wasted on a backend that can't start.
+
 ```sh
 # server: is it running, as whom, since when; its sandbox score
 systemctl status storybook

@@ -15,6 +15,11 @@
 Description=Storybook backend
 After=network-online.target postgresql.service
 Wants=network-online.target
+# a backend that can't start gives up after 5 tries within a minute (status: failed) instead of
+# being restarted every 3 seconds without end – systemd's default (5 in 10 seconds) is never
+# reached with 3 seconds between the tries, and every try builds the whole sandbox again
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 User=storybook
