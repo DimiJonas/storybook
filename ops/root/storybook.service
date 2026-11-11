@@ -24,8 +24,9 @@ WorkingDirectory=@RUNTIME_DIR@/server
 ExecStart=/usr/bin/node src/index.js
 Restart=on-failure
 RestartSec=3
-# new photos readable for nginx (the backend sets this itself too)
-UMask=0022
+# what systemd creates for it (its log files): not readable for others. The backend sets its own
+# umask to 022 at start (server/src/images.js), so new photos stay readable for nginx.
+UMask=0027
 StandardOutput=append:/var/log/storybook/backend.log
 StandardError=append:/var/log/storybook/backend-error.log
 

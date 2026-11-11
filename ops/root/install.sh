@@ -99,9 +99,18 @@ group=dk-notify
 if getent group "$group" > /dev/null && ! id -nG "$APP_USER" | tr ' ' '\n' | grep -qx "$group"; then
   usermod -aG "$group" "$APP_USER"; echo "== $APP_USER added to the group $group (the ntfy topic)"
 fi
-# the code: the deploy user's, readable for everyone (it's public) – the backend can't change it
+# the code: the deploy user's; the backend reads it through its group – it can't change it, others
+# can't read it. The deploy user's umask is 027 (CIS): what it creates is 640/750, without rights for
+# "others". So every folder gets the group of the backend's user and the setgid bit: whatever
+# git pull and npm ci create later belongs to that group too, and is readable for the backend.
 [ "$(stat -c %U "$RUNTIME_DIR")" = "$DEPLOY_USER" ] || echo "   WARNING: $RUNTIME_DIR should belong to $DEPLOY_USER (sudo chown -R $DEPLOY_USER: $RUNTIME_DIR)"
-[ "$(stat -c %a "$RUNTIME_DIR")" = 755 ] || chmod 755 "$RUNTIME_DIR"
+if [ -n "$(find "$RUNTIME_DIR" ! -path "$RUNTIME_DIR/server/.env" \( ! -group "$APP_USER" -o \( -type d ! -perm -2050 \) -o ! -perm -g+r \) -print -quit)" ]; then
+  chgrp -R "$APP_USER" "$RUNTIME_DIR"
+  find "$RUNTIME_DIR" -type d -exec chmod g+rxs {} +
+  find "$RUNTIME_DIR" -type f ! -path "$RUNTIME_DIR/server/.env" -exec chmod g+r {} +
+  echo "== $RUNTIME_DIR readable for $APP_USER (its group, setgid folders)"
+fi
+chmod o-rwx "$RUNTIME_DIR"
 # server/.env (database password, secrets): only the backend's user
 env_file="$RUNTIME_DIR/server/.env"
 if [ -f "$env_file" ]; then
@@ -115,6 +124,11 @@ if [ -n "$(find "$UPLOADS" ! -user "$APP_USER" -print -quit)" ]; then
   chown -R "$APP_USER:$APP_USER" "$UPLOADS"; echo "== $UPLOADS belongs to $APP_USER"
 fi
 install -d -o root -g adm -m 750 /var/log/storybook
+# (systemd creates its log files readable for everyone; CIS 6.1: at most 640)
+for f in /var/log/storybook/backend.log /var/log/storybook/backend-error.log; do
+  [ -e "$f" ] || install -o root -g adm -m 640 /dev/null "$f"
+  [ "$(stat -c '%a %G' "$f")" = "640 adm" ] || { chgrp adm "$f"; chmod 640 "$f"; }
+done
 # the service (template filled in)
 sed -e "s#@RUNTIME_DIR@#$RUNTIME_DIR#g" "$HERE/storybook.service" > "$work/storybook.service"
 unit=/etc/systemd/system/storybook.service

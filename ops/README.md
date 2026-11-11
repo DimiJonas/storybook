@@ -130,6 +130,10 @@ cat ~/.ssh/storybook_backup.pub          # copy this line
 # server: one line in ~/.ssh/authorized_keys – the key may only run rrsync, read-only, in the backups folder
 echo 'restrict,command="/usr/bin/rrsync -ro /home/appuser/backups/storybook" PASTE-THE-KEY-LINE-HERE' >> ~/.ssh/authorized_keys
 ```
+Your normal login needs the same `IdentitiesOnly yes` (dk-srv's `setup-commands.txt`, step 1: the
+alias `dk`). Without it, `ssh appuser@SERVER` offers every key the laptop's SSH agent holds – also
+this backup key, which the server then takes: you'd land in the read-only backup copy, where every
+path starts in the backups folder.
 (`SERVER` = the server's address, as you type it after `ssh`.)
 
 ### Restoring
@@ -438,7 +442,7 @@ only `storybook`:
 | | `appuser` (you, the admin) | `storybook` (the backend) |
 |---|---|---|
 | SSH login, sudo | yes | no – no password, no shell (`nologin`), no home folder |
-| the code, `/srv/storybook` (git clone) | owns it: `git pull`, `npm ci`, builds | reads only |
+| the code, `/srv/storybook` (git clone) | owns it: `git pull`, `npm ci`, builds | reads only, through its group |
 | `server/.env` (secrets) | with sudo (`sudo nano …`) | reads (`600`, its own) |
 | the photos, `/etc/storybook/uploads` | reads (for the backups) | writes |
 | the ntfy topic | reads (group `dk-notify`) | reads (group `dk-notify`) |
@@ -446,6 +450,10 @@ only `storybook`:
 
 The code is in `/srv/storybook`, not in appuser's home: home folders are `750` (CIS), so the
 backend's user couldn't even read it there – and the service hides `/home` from it completely.
+It reads the code through its **group**: every folder in `/srv/storybook` belongs to the group
+`storybook` and has the **setgid bit** (`2750`), so whatever appuser creates later (`git pull`,
+`npm ci`) belongs to that group too. appuser's umask is `027` (CIS): new files are `640`, folders
+`750` – readable for the group, not for others. `ops/root/install.sh` puts it right if it changed.
 
 **The sandbox** (`ops/root/storybook.service`): for the backend the whole file system is read-only
 except the photo folder; `/home` and `/root` don't exist for it; it gets its own empty `/tmp` and

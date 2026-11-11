@@ -69,9 +69,10 @@ sudo unattended-upgrade --dry-run --debug 2>&1 | grep -i 'allowed origins'
 # =================================================================================================
 
 # (server) /srv/storybook belongs to you (appuser): you pull, install and build there; the backend
-# only reads it. Not in your home folder: home folders are 750 (CIS) – the backend's user couldn't
-# read it there.
-sudo install -d -o appuser -g appuser -m 755 /srv/storybook
+# only reads it – through its group (step 7 sets the group "storybook" and the setgid bit on every
+# folder, so what you create later belongs to that group too; others can't read it). Not in your
+# home folder: home folders are 750 (CIS) – the backend's user couldn't read it there.
+sudo install -d -o appuser -g appuser -m 750 /srv/storybook
 
 # (server) clone the repository – over https (the firewall keeps outgoing SSH closed)
 git clone https://github.com/DimiJonas/storybook /srv/storybook

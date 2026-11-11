@@ -35,6 +35,8 @@ fi
 name=$1; shift
 cmd=$(printf '%s\n' "$scripts" | awk -F'\t' -v n="$name" '$1 == n { print $2 }')
 [ -n "$cmd" ] || { echo "No such script: $name (sudo storybook-run lists them)" >&2; exit 2; }
+# photos the scripts write stay readable for nginx (the user's own umask would be 027)
+umask 022
 # shellcheck disable=SC2086   # (the command from package.json: a script and fixed words)
 exec runuser -u "$user" -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 \
   ${TERM:+TERM=$TERM} node $cmd "$@"

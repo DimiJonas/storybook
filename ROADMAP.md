@@ -878,6 +878,11 @@ the backend or one of its libraries would have given an attacker that account. N
   the backend only reads it). Not in appuser's home: home folders are `750` (CIS), and the service
   hides `/home` anyway
 - **`server/.env`** belongs to `storybook` (`600`); the **photos** too (it writes them)
+- the code is readable for it **through its group**: group `storybook` and the setgid bit on every
+  folder of `/srv/storybook`, so what appuser creates later inherits the group. (Found at the
+  deploy: appuser's umask 027 made the new clone `750`/`640`, and systemd couldn't even enter the
+  folder – the first start failed with `200/CHDIR`.) Its log files are `640` (`UMask=0027`; the
+  backend sets 022 for the photos itself)
 - **a systemd service instead of pm2** (`ops/root/storybook.service`): starts at boot, restarts
   after a crash – and a sandbox: read-only file system except the photos, no `/home`, own `/tmp`
   and `/dev`, no new privileges or capabilities, kernel, clock and other processes off limits, only

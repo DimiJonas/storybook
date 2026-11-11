@@ -29,9 +29,11 @@ the app could at most reach the backend's own user, never what root runs.
 What `install.sh` also sets each time (and puts right if it changed):
 - the user **`storybook`**: a system user without password, shell or home folder, in the group
   `dk-notify` (it may read the ntfy topic – the backend sends notifications too)
+- `/srv/storybook`: group `storybook`, setgid folders (`2750`), files group-readable – the backend
+  reads the code through its group; what appuser creates later inherits the group; others get nothing
 - `/srv/storybook/server/.env`: owned by `storybook`, `600` – only the backend reads the secrets
 - `/etc/storybook/uploads`: owned by `storybook` (it writes the photos; folders `755`, files `644`,
   so nginx can serve them)
-- `/var/log/storybook/`: `root:adm`, `750` – systemd writes the backend's output there
+- `/var/log/storybook/`: `root:adm`, `750`, the files `640` – systemd writes the backend's output there
 - the service is started (and starts after a reboot) – unless maintenance mode or dk-srv's
   lockdown is on

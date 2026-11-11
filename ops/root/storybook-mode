@@ -70,7 +70,7 @@ backend_start() {
     [ "$i" -lt "$WAIT_SECONDS" ] && sleep 1
   done
   if [ "$code" = 401 ]; then ok "backend answers (401 = running, wants a login)"
-  else warn "backend doesn't answer as expected ($code) – see: tail -50 /var/log/storybook/backend-error.log"; fi
+  else warn "backend doesn't answer as expected ($code) – see: sudo systemctl status $SERVICE, sudo journalctl -u $SERVICE -n 50, sudo tail -50 /var/log/storybook/backend-error.log"; fi
 }
 check_site() {  # check_site <expected code> <what it means>
   local code; code=$(http_code "$SITE_URL")
@@ -99,7 +99,12 @@ case "$command" in
     if [ "$short" = yes ]; then echo "$mode"; exit 0; fi
     line=$mode
     if [ "$mode" != normal ] && [ -r "$SB_STATE/mode" ]; then IFS=$'\t' read -r _ since why < "$SB_STATE/mode"; line+=" since $since – $why"; fi
-    if systemctl is-active --quiet "$SERVICE"; then backend="running ($SERVICE)"; else backend="stopped ($SERVICE)"; fi
+    state=$(systemctl is-active "$SERVICE" 2>/dev/null); state=${state:-unknown}
+    case "$state" in
+      active) backend="running ($SERVICE)" ;;
+      failed) backend="FAILED ($SERVICE) – why: sudo systemctl status $SERVICE; sudo journalctl -u $SERVICE -n 50" ;;
+      *) backend="stopped: $state ($SERVICE)" ;;
+    esac
     printf '%-12s %s\n' "Storybook:" "$line" "Site:" "$SITE_URL answers $(http_code "$SITE_URL")" "Backend:" "$backend" \
       "Server:" "$(server_mode) (sudo dk-mode status)"
     exit 0

@@ -84,7 +84,7 @@ sudo tail -50 /var/log/storybook/backend-error.log
 sudo tail -f /var/log/storybook/backend.log
 
 # (server) the service's own messages (started, stopped, crashed and restarted)
-journalctl -u storybook --since today --no-pager
+sudo journalctl -u storybook --since today --no-pager
 
 # (server) nginx: requests and errors
 sudo tail -50 /var/log/nginx/access.log
