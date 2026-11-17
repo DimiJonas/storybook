@@ -268,7 +268,8 @@ cat ~/.ssh/storybook_backup.pub
 # (server) allow that key – read-only, only the backups folder (paste the line printed above)
 echo 'restrict,command="/usr/bin/rrsync -ro /home/appuser/backups/storybook" PASTE-THE-KEY-LINE-HERE' >> ~/.ssh/authorized_keys
 
-# (laptop) fetch the backups now and then; it checks that the newest one decrypts with your key
+# (laptop) fetch the backups now and then; it checks that the newest one decrypts with your key and
+# is readable (needs pg_restore 16 or newer: pg_restore --version, else apt install postgresql-client-16)
 ~/storybook/ops/pull-backup.sh
 
 

@@ -38,12 +38,14 @@ const OnThisDayCard = ({ entries }) => {
                   />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold text-gray-800 flex gap-2 items-center">
-                      {memory.title}
-                      <span className="text-xl">{memory.mood || '💖'}</span>
+                  {/* title and date side by side when they fit – on a narrow phone the date wraps
+                      below the title instead of being pushed past the card's edge */}
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <h3 className="min-w-0 text-lg font-semibold text-gray-800 break-words">
+                      {memory.title}{' '}
+                      <span className="text-xl whitespace-nowrap">{memory.mood || '💖'}</span>
                     </h3>
-                    <span className="text-sm text-gray-500 shrink-0">
+                    <span className="text-sm text-gray-500 whitespace-nowrap">
                       {year}
                       {days > 1 && ` · Tag ${day} von ${days}`}
                     </span>

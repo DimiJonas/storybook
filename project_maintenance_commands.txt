@@ -173,7 +173,7 @@ tail -3 ~/backups/storybook/restore-test.log
 FORCE_RESTORE_TEST=1 /srv/storybook/ops/backup.sh
 
 # (laptop) copy all new backups (encrypted dumps + photos) to ~/storybook-backups/ and check that
-# the newest one decrypts with your key (~/.config/storybook/backup-key.txt)
+# the newest one decrypts with your key (~/.config/storybook/backup-key.txt) and pg_restore can read it
 ~/storybook/ops/pull-backup.sh
 
 # (laptop) decrypt a backup for restoring (newest, or the one of a day) – then see

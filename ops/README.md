@@ -111,8 +111,10 @@ weekly report shows the last one. By hand: `FORCE_RESTORE_TEST=1 /srv/storybook/
 ```sh
 ~/storybook/ops/pull-backup.sh
 ```
-Copies everything new to `~/storybook-backups/` and then checks that the newest dump decrypts with
-your key. The first run copies all photos, later runs only new files.
+Copies everything new to `~/storybook-backups/` and then checks the newest dump: it decrypts with
+your key, and `pg_restore` can read all of it (needs `pg_restore` of PostgreSQL 16 or newer on your
+computer – `pg_restore --version`; otherwise `sudo apt install postgresql-client-16`). The first run
+copies all photos, later runs only new files.
 
 It logs in with **its own SSH key that may only read the backups folder** (nothing else – no
 shell, no writing) and the server sends a "Backups pulled" notification for it. Set up once:
