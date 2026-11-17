@@ -314,7 +314,10 @@ sudo logrotate --debug --state /var/lib/dk-srv/logrotate.status /etc/dk-srv/logr
   backup copy of a photo gets the changed file with the next backup run.
 - **Map pictures** come through nginx (`/tiles/`, kept in `/var/cache/nginx/storybook-tiles`, at
   most 2 GB): only for pages of this site (Referer), no cookies or login are passed on to
-  OpenStreetMap, and nothing with `?...` (that would get around the cache).
+  OpenStreetMap, and nothing with `?...` (that would get around the cache). nginx looks up the
+  tile server's name per request (`resolver`), not when it starts: if the name resolution is
+  missing for a moment, only new map tiles fail – nginx itself still starts (on 2026-11-14 it
+  didn't, and the storybook was down for 20 hours).
 
 **Checking the headers** after a deploy (should list `strict-transport-security`,
 `content-security-policy`, …):
@@ -508,6 +511,10 @@ What the storybook gets from [dk-srv](https://github.com/DimiJonas/dk-srv), thro
   storybook itself: an app account with 20 failed logins (the backend), a failed backup, the
   monthly restore test (`ops/backup.sh`). They read the topic from dk-srv's `/etc/dk-srv/notify.conf`
   (`root:dk-notify`, `640`), and send nothing secret: no passwords, no login names.
+- **The site watch** (every 10 minutes, `dk-site-watch`): the storybook answers (200, or 503 in
+  maintenance mode) and so does its backend (`/api/books` with 401 – `HEALTH_PATH` in
+  `ops/root/app.conf`); a notification when one stays down for two checks in a row, and when it's
+  back. nginx also starts again by itself after a failed start.
 - **The weekly report** (Monday): per app its mode, wrong and blocked logins (from nginx's log),
   backups x/7 and encrypted, the last restore test, npm problems, the certificate.
 - **fail2ban**: scanners and IPs that keep hitting the login's rate limit are banned (with a

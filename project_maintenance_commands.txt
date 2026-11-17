@@ -19,6 +19,10 @@
 # Quick health check
 # =================================================================================================
 
+# (server) the storybook, its backend, nginx and the other sites answering? (dk-srv checks this
+# every 10 minutes and notifies when one stays down)
+sudo dk-site-watch
+
 # (server) backend running? ("active (running)")
 systemctl status storybook --no-pager | head -3
 

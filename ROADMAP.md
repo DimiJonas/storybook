@@ -21,6 +21,7 @@
 | 15  | ✅ Hardening by the guides (CIS Ubuntu/NGINX/PostgreSQL, OWASP ASVS)          | M–L  | 13, 14        |
 | 16  | ✅ Three repositories: the server's scripts to dk-srv, the home page to dk-home | M    | 15            |
 | 17  | ✅ The backend as its own user, in a sandbox                                   | M    | 16            |
+| 18  | ✅ Staying up: map tiles don't block nginx; outages noticed                    | S    | 17            |
 | –   | Later: 2FA for the app login (codes from an authenticator app)                | M    | 14            |
 | –   | Later: printable storybook, see "Future ideas"                                | L    | 12            |
 
@@ -924,3 +925,22 @@ through the system user); an address filter for the service's network.
 - load memories page by page (only needed with many thousands of memories)
 - videos and voice memos in memories
 - reminders ("Heute vor 3 Jahren …") by email or push notification
+
+---
+
+## 18. Staying up ✅
+
+On 2026-11-14 an automatic libc update restarted nginx and the server's name resolution in the same
+second. nginx couldn't resolve `tile.openstreetmap.org` – written straight into the map tiles'
+`proxy_pass`, so nginx looks it up when it starts – and refused to start. The storybook was down
+for 20 hours, and nothing noticed (dk-srv's HARDENING.md, lesson 18).
+
+- **map tiles**: the tile server is looked up per request (`resolver 127.0.0.53`, the name in a
+  variable, the `/tiles/` prefix removed by `rewrite`). A missing name resolution now only means no
+  new tiles for that moment; cached ones are still served. The cache keeps working (same key)
+- **`HEALTH_PATH=/api/books`, `HEALTH_CODE=401`** in `ops/root/app.conf`: dk-srv's new site watch
+  (every 10 minutes) checks the backend too – nginx alone still serves the start page when the
+  backend is down
+- dk-srv (its step 3): nginx starts again by itself after a failed start; `dk-site-watch` notifies
+  when the storybook, its backend, nginx or a static site stays down for 10+ minutes, and when
+  it's back
