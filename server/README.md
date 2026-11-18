@@ -89,6 +89,43 @@ belongs to the backend's user `storybook` (`600` – set by `ops/root/install.sh
 - `migrations/book/` – per-storybook changes, run in every `book_<n>` (see below)
 - `uploads/` – photos when running on the laptop (not in git)
 
+## Uploading a photo
+
+What happens between the app and the server when a photo is uploaded – including how its GPS
+position becomes a town and is then removed (`src/index.js`, `src/images.js`, `src/places.js`).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as App
+  participant N as nginx
+  participant B as Backend
+  participant F as Photo folder
+  participant DB as PostgreSQL
+  participant G as Nominatim
+
+  A->>N: POST /api/books/:id/upload (one photo)
+  Note over N: at most 50 MB, rate limit
+  N->>B: passed on
+  B->>F: saved as it came (multer: up to 10 files, 50 MB each)
+  B->>B: a photo by its content, not its name? If not: deleted, 400
+  B->>F: width and height (sharp)
+  B->>DB: the photo's row and the change history (one transaction)
+  B->>F: small versions thumb/ and medium/ (sharp, WebP, never with a position)
+  B->>F: GPS position read (exiftool)
+  alt Nominatim reachable
+    B->>G: position → town
+    B->>DB: the town as the photo's place (and the memory's, unless chosen by hand)
+    B->>F: position removed from the original (exiftool, picture unchanged)
+  else not reachable
+    Note over B,F: the position stays in the file until<br/>npm run photos:places tries again
+  end
+  B-->>A: 200 and the new photos
+```
+
+Exact positions are never written to the database. The small versions are made before the
+position is removed, but never contain it (sharp drops the metadata).
+
 ## API
 
 Everything except the login needs the **login cookie** (step 14, `src/sessions.js`):

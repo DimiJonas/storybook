@@ -24,6 +24,7 @@
 | 18  | ✅ Staying up: map tiles don't block nginx; outages noticed                    | S    | 17            |
 | –   | Later: 2FA for the app login (codes from an authenticator app)                | M    | 14            |
 | –   | Later: printable storybook, see "Future ideas"                                | L    | 12            |
+| –   | In progress: on Kubernetes – containers, Keycloak login (with 2FA), a separate photo worker; planned in [dk-platform](https://github.com/DimiJonas/dk-platform) | L | 18 |
 
 ---
 

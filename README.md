@@ -39,6 +39,52 @@ in English.
 Database changes are plain SQL migrations (`server/migrations/`); `schema.sql` is a snapshot of the
 current structure.
 
+### How it runs
+
+```mermaid
+flowchart TB
+  phone["Phone or browser<br/>the app (PWA)"]
+  laptop["Laptop<br/>pulls the backups"]
+  subgraph server["Server: Ubuntu, hardened by dk-srv"]
+    nginx["nginx<br/>TLS, rate limits"]
+    build[("Built app<br/>clientbuild/")]
+    backend["Backend<br/>Node.js, Express<br/>own user, sandboxed"]
+    photos[("Photos<br/>originals, small versions")]
+    db[("PostgreSQL<br/>a schema per storybook")]
+    backup["Nightly backup<br/>age-encrypted"]
+  end
+  subgraph internet["Internet services"]
+    direction LR
+    osm["OpenStreetMap<br/>map tiles"]
+    nominatim["Nominatim<br/>place search"]
+    ntfy["ntfy<br/>phone notifications"]
+  end
+
+  phone -->|HTTPS| nginx
+  nginx --> build
+  nginx -->|/api| backend
+  nginx -->|"/uploads, after<br/>asking the backend"| photos
+  nginx -->|"/tiles, cached"| osm
+  backend --> photos
+  backend --> db
+  backend --> nominatim
+  backend --> ntfy
+  backup --> photos
+  backup --> db
+  laptop -->|"SSH, read-only"| backup
+
+  classDef app fill:#EEEDFE,stroke:#534AB7,color:#26215C
+  classDef plat fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A
+  classDef ext fill:#FFFFFF,stroke:#888780,color:#2C2C2A
+  class backend,db,photos,build,backup app
+  class nginx plat
+  class phone,osm,nominatim,ntfy,laptop ext
+```
+
+nginx answers every request: the app's files directly, `/api` through the backend, a photo only
+after the backend said yes (`auth_request`), map tiles from its cache or OpenStreetMap. What happens
+when a photo is uploaded: [`server/README.md`](server/README.md#uploading-a-photo).
+
 ## Security
 
 Security was a main goal. The app holds private photos and texts, so it's built to be locked
@@ -103,6 +149,8 @@ In the commands, `storybook.example.com` stands for your own domain.
 ## Status
 
 A personal project in daily use. Next idea: a printable storybook (a year as a laid-out PDF for a
-photo book) - see `ROADMAP.md`.
+photo book) - see `ROADMAP.md`. In progress: moving it to a hardened Kubernetes platform –
+containers, a Keycloak login, the photo conversion isolated in its own service – planned and
+documented in [dk-platform](https://github.com/DimiJonas/dk-platform).
 
 © All rights reserved. The code is public to read; there is no license for reuse.
